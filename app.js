@@ -1,9 +1,9 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
-  getFirestore, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, doc, updateDoc
+  getFirestore, collection, addDoc, onSnapshot, query, orderBy, 
+  deleteDoc, doc, updateDoc, setDoc, getDocs, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-// Firebase 설정 (기존과 동일)
 const firebaseConfig = {
   apiKey: "AIzaSyAje85hdqJ9iEZuvL57ZYL2HJa8vUZcGBc",
   authDomain: "drawingproject-ae35d.firebaseapp.com",
@@ -16,29 +16,81 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// 상태 변수
+// 상태 관리
 const roomId = "room1";
+let currentPageId = "page1";
+let pages = ["page1"];
 let currentLayer = "layer1";
 let tool = "brush", color = "#000000", size = 5;
-let layers = []; // {id, order, opacity}
+let layers = []; 
 let canvases = {}, contexts = {};
-let scale = 1; // 줌 비율
-let offset = { x: 0, y: 0 };
+let scale = 1, offset = { x: 0, y: 0 };
+let unsubscribeList = []; // 페이지 전환 시 리스너 해제용
 
-// 🧱 레이어 생성
+// 📄 페이지 관리 기능
+async function initPages() {
+  const pagesRef = collection(db, "rooms", roomId, "pages");
+  onSnapshot(pagesRef, (snap) => {
+    pages = snap.empty ? ["page1"] : snap.docs.map(d => d.id).sort();
+    updatePageUI();
+  });
+}
+
+function updatePageUI() {
+  const container = document.getElementById("pageTabs");
+  container.innerHTML = "";
+  pages.forEach((pId, idx) => {
+    const tab = document.createElement("div");
+    tab.className = `page-tab ${currentPageId === pId ? "active" : ""}`;
+    tab.innerHTML = `<span>${idx + 1}번 장</span> <span class="del-page">✕</span>`;
+    tab.onclick = () => switchPage(pId);
+    tab.querySelector(".del-page").onclick = (e) => { e.stopPropagation(); deletePage(pId); };
+    container.appendChild(tab);
+  });
+}
+
+async function switchPage(pId) {
+  if (currentPageId === pId) return;
+  currentPageId = pId;
+  
+  // 기존 리스너 해제 및 캔버스 초기화
+  unsubscribeList.forEach(unsub => unsub());
+  unsubscribeList = [];
+  document.getElementById("canvasContainer").innerHTML = "";
+  canvases = {}; contexts = {}; layers = [];
+  
+  // 해당 페이지의 배경색 동기화
+  const pageDoc = await doc(db, "rooms", roomId, "pages", pId);
+  onSnapshot(pageDoc, (docSnap) => {
+    if (docSnap.exists()) {
+      document.getElementById("canvasContainer").style.backgroundColor = docSnap.data().bgColor || "#ffffff";
+    }
+  });
+
+  createLayer("layer1");
+  updatePageUI();
+}
+
+async function deletePage(pId) {
+  if (pages.length <= 1) return alert("최소 한 장의 페이지는 필요합니다.");
+  if (!confirm("해당 페이지의 모든 데이터가 삭제됩니다. 계속하시겠습니까?")) return;
+
+  const pageRef = doc(db, "rooms", roomId, "pages", pId);
+  await deleteDoc(pageRef); // 실제 구현 시 하위 컬렉션(strokes)도 재귀적으로 삭제하는 로직이 필요함
+  if (currentPageId === pId) switchPage(pages[0] === pId ? pages[1] : pages[0]);
+}
+
+// 🧱 레이어 및 드로잉 로직 (최적화 포함)
 function createLayer(layerId) {
   const container = document.getElementById("canvasContainer");
   const canvas = document.createElement("canvas");
-  
-  // 16:9 실제 픽셀 해상도 설정 (고해상도 유지)
-  canvas.width = 1920; 
-  canvas.height = 1080;
+  canvas.width = 1920; canvas.height = 1080;
   canvas.classList.add("layerCanvas");
   canvas.id = `canvas-${layerId}`;
   container.appendChild(canvas);
 
   canvases[layerId] = canvas;
-  contexts[layerId] = canvas.getContext("2d");
+  contexts[layerId] = canvas.getContext("2d", { willReadFrequently: true });
 
   const newLayer = { id: layerId, order: layers.length, opacity: 1 };
   layers.push(newLayer);
@@ -47,181 +99,117 @@ function createLayer(layerId) {
   updateLayerUI();
 }
 
-// 🎨 레이어 UI 업데이트 (삭제/순서 이동 포함)
-function updateLayerUI() {
-  const list = document.getElementById("layersList");
-  list.innerHTML = "";
-
-  // order 기준 역순 정렬 (위에 있는 레이어가 리스트 상단)
-  [...layers].sort((a, b) => b.order - a.order).forEach((layer, index) => {
-    const div = document.createElement("div");
-    div.className = `layerItem ${currentLayer === layer.id ? "active" : ""}`;
-    div.innerHTML = `
-      <div class="layer-top">
-        <span>${layer.id}</span>
-        <div class="layer-controls">
-          <button class="small-btn up-btn">▲</button>
-          <button class="small-btn down-btn">▼</button>
-          <button class="small-btn del-btn">✕</button>
-        </div>
-      </div>
-      <input type="range" min="0" max="1" step="0.1" value="${layer.opacity}">
-    `;
-
-    div.onclick = () => { currentLayer = layer.id; updateLayerUI(); };
-    
-    // 순서 변경 로직
-    div.querySelector(".up-btn").onclick = (e) => { e.stopPropagation(); moveLayer(layer.id, 1); };
-    div.querySelector(".down-btn").onclick = (e) => { e.stopPropagation(); moveLayer(layer.id, -1); };
-    
-    // 삭제 로직
-    div.querySelector(".del-btn").onclick = (e) => { 
-      e.stopPropagation(); 
-      if(layers.length > 1) removeLayer(layer.id);
-    };
-
-    div.querySelector("input").oninput = (e) => {
-      layer.opacity = e.target.value;
-      canvases[layer.id].style.opacity = layer.opacity;
-    };
-
-    list.appendChild(div);
-  });
-}
-
-// ↕️ 레이어 순서 이동
-function moveLayer(id, direction) {
-  const idx = layers.findIndex(l => l.id === id);
-  const targetIdx = idx + direction;
-  if (targetIdx >= 0 && targetIdx < layers.length) {
-    [layers[idx].order, layers[targetIdx].order] = [layers[targetIdx].order, layers[idx].order];
-    // 실제 DOM 순서 변경 (z-index)
-    canvases[layers[idx].id].style.zIndex = layers[idx].order;
-    canvases[layers[targetIdx].id].style.zIndex = layers[targetIdx].order;
-    updateLayerUI();
+// 🚀 최적화: 거리 기반 포인트 필터링 (RDP 간소화 버전)
+function simplifyPoints(points, tolerance = 2) {
+  if (points.length <= 2) return points;
+  const result = [points[0]];
+  for (let i = 1; i < points.length - 1; i++) {
+    const last = result[result.length - 1];
+    const dist = Math.sqrt(Math.pow(points[i].x - last.x, 2) + Math.pow(points[i].y - last.y, 2));
+    if (dist > tolerance) result.push(points[i]);
   }
+  result.push(points[points.length - 1]);
+  return result;
 }
 
-// ❌ 레이어 삭제
-async function removeLayer(id) {
-  if (!confirm(`${id}를 삭제하시겠습니까?`)) return;
-  
-  // Firebase 데이터 삭제는 선택사항 (여기서는 UI와 로컬 배열에서 제거)
-  const canvas = canvases[id];
-  canvas.remove();
-  delete canvases[id];
-  delete contexts[id];
-  layers = layers.filter(l => l.id !== id);
-  if (currentLayer === id) currentLayer = layers[0].id;
-  updateLayerUI();
-}
-
-// 🔍 줌 기능
-document.getElementById("viewport").onwheel = (e) => {
-  e.preventDefault();
-  
-  const viewport = document.getElementById("viewport");
-  const container = document.getElementById("canvasContainer");
-  const rect = viewport.getBoundingClientRect();
-
-  // 1. 현재 마우스의 뷰포트 내 좌표 계산
-  const mouseX = e.clientX - rect.left;
-  const mouseY = e.clientY - rect.top;
-
-  // 2. 줌 배율 결정
-  const delta = e.deltaY > 0 ? 0.9 : 1.1;
-  const nextScale = Math.min(Math.max(0.1, scale * delta), 10);
-
-  // 3. 마우스 위치의 '월드 좌표(캔버스 기준 좌표)'를 역계산
-  // (현재 마우스 좌표 - 현재 오프셋) / 현재 스케일
-  const worldX = (mouseX - offset.x) / scale;
-  const worldY = (mouseY - offset.y) / scale;
-
-  // 4. 새로운 스케일 적용
-  scale = nextScale;
-
-  // 5. 새로운 스케일에서 마우스 아래의 지점이 동일하게 유지되도록 오프셋 재계산
-  offset.x = mouseX - worldX * scale;
-  offset.y = mouseY - worldY * scale;
-
-  // 6. 변환 적용 (translate와 scale 함께 사용)
-  container.style.transform = `translate(${offset.x}px, ${offset.y}px) scale(${scale})`;
-  document.getElementById("zoomLevel").innerText = `${Math.round(scale * 100)}%`;
-};
-
-// 🖱 좌표 보정 (줌 상태 고려)
-function getMousePos(e) {
-  const rect = canvases[currentLayer].getBoundingClientRect();
-  // 브라우저 표시 크기와 실제 캔버스 해상도(1920) 비율 계산
-  const scaleX = canvases[currentLayer].width / rect.width;
-  const scaleY = canvases[currentLayer].height / rect.height;
-  return {
-    x: (e.clientX - rect.left) * scaleX,
-    y: (e.clientY - rect.top) * scaleY
-  };
-}
-
-// ✍️ 드로잉 로직
-let drawing = false, currentStroke = [];
+// ✍️ 드로잉 이벤트
 document.addEventListener("mousedown", (e) => {
   if (e.target.closest("#canvasContainer")) {
-    drawing = true;
-    currentStroke = [];
+    if (tool === "bucket") {
+      const pos = getMousePos(e);
+      handleFloodFill(pos);
+    } else {
+      drawing = true;
+      currentStroke = [];
+    }
   }
-});
-
-document.addEventListener("mousemove", (e) => {
-  if (!drawing) return;
-  const pos = getMousePos(e);
-  currentStroke.push(pos);
-  drawSegment(contexts[currentLayer], currentStroke);
 });
 
 document.addEventListener("mouseup", async () => {
-  if (!drawing || currentStroke.length === 0) { drawing = false; return; }
+  if (!drawing) return;
   drawing = false;
+  if (currentStroke.length === 0) return;
 
-  const ref = collection(db, "rooms", roomId, "pages", "page1", "layers", currentLayer, "strokes");
+  // 데이터 최적화 후 업로드
+  const optimizedPoints = simplifyPoints(currentStroke);
+  const ref = collection(db, "rooms", roomId, "pages", currentPageId, "layers", currentLayer, "strokes");
   await addDoc(ref, {
-    points: currentStroke, color, size, tool, timestamp: Date.now()
+    points: optimizedPoints, color, size, tool, timestamp: Date.now()
   });
 });
 
-function drawSegment(ctx, points) {
-  if (points.length < 2) return;
-  const p1 = points[points.length - 2], p2 = points[points.length - 1];
-  ctx.lineWidth = size;
-  ctx.lineCap = ctx.lineJoin = "round";
-  ctx.globalCompositeOperation = tool === "eraser" ? "destination-out" : "source-over";
-  ctx.strokeStyle = color;
-  ctx.beginPath();
-  ctx.moveTo(p1.x, p1.y);
-  ctx.lineTo(p2.x, p2.y);
-  ctx.stroke();
+// 🪣 페인트통 (Flood Fill) 기능
+function handleFloodFill(pos) {
+  const ctx = contexts[currentLayer];
+  const imageData = ctx.getImageData(0, 0, 1920, 1080);
+  // 웹 워커나 라이브러리 없이 구현 시 성능 저하가 있을 수 있어, 
+  // 여기서는 위치 정보와 색상만 Firestore에 기록하고 리스너에서 채우기를 실행하도록 설계하는 것이 동기화에 유리합니다.
+  const ref = collection(db, "rooms", roomId, "pages", currentPageId, "layers", currentLayer, "strokes");
+  addDoc(ref, {
+    type: "fill", startPos: pos, color, timestamp: Date.now()
+  });
 }
 
-// 📡 동기화
+// 📡 동기화 리스너
 function listenLayer(layerId) {
-  const ref = collection(db, "rooms", roomId, "pages", "page1", "layers", layerId, "strokes");
-  onSnapshot(query(ref, orderBy("timestamp")), (snap) => {
+  const ref = collection(db, "rooms", roomId, "pages", currentPageId, "layers", layerId, "strokes");
+  const q = query(ref, orderBy("timestamp"));
+  const unsub = onSnapshot(q, (snap) => {
     const ctx = contexts[layerId];
     ctx.clearRect(0, 0, 1920, 1080);
     snap.forEach(doc => {
       const s = doc.data();
-      ctx.lineWidth = s.size;
-      ctx.strokeStyle = s.color;
-      ctx.globalCompositeOperation = s.tool === "eraser" ? "destination-out" : "source-over";
-      ctx.beginPath();
-      s.points.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
-      ctx.stroke();
+      if (s.type === "fill") {
+        renderFloodFill(ctx, s.startPos, s.color);
+      } else {
+        renderStroke(ctx, s);
+      }
     });
   });
+  unsubscribeList.push(unsub);
 }
 
-// 초기화
-createLayer("layer1");
+function renderStroke(ctx, s) {
+  ctx.lineWidth = s.size;
+  ctx.strokeStyle = s.color;
+  ctx.lineCap = ctx.lineJoin = "round";
+  ctx.globalCompositeOperation = s.tool === "eraser" ? "destination-out" : "source-over";
+  ctx.beginPath();
+  s.points.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+  ctx.stroke();
+}
 
-// 바인딩
+// 단순화된 채우기 로직 (실제 서비스 시에는 스캔라인 알고리즘 권장)
+function renderFloodFill(ctx, pos, fillColor) {
+  ctx.fillStyle = fillColor;
+  ctx.globalCompositeOperation = "source-over";
+  // 참고: 캔버스 전체를 채우는 방식이나 특정 영역 채우기 로직 구현
+  // 레이어 기반 시스템에서는 해당 레이어의 빈 공간을 채우는 용도로 사용
+  ctx.fillRect(0,0, 1920, 1080); // 예시: 레이어 전체 채우기
+}
+
+// 초기 실행
+initPages();
+switchPage("page1");
+
+// 이벤트 바인딩
+document.getElementById("addPage").onclick = async () => {
+  if (pages.length >= 3) return alert("최대 3장까지만 추가 가능합니다.");
+  const newId = `page${Date.now()}`;
+  await setDoc(doc(db, "rooms", roomId, "pages", newId), { 
+    bgColor: "#ffffff", 
+    createdAt: Date.now() 
+  });
+  switchPage(newId);
+};
+
+document.getElementById("bgColor").oninput = (e) => {
+  const newColor = e.target.value;
+  updateDoc(doc(db, "rooms", roomId, "pages", currentPageId), { bgColor: newColor });
+};
+
+document.getElementById("bucket").onclick = (e) => { tool = "bucket"; setActiveTool(e.target); };
+document.getElementById("lasso").onclick = (e) => { tool = "lasso"; setActiveTool(e.target); };
 document.getElementById("addLayer").onclick = () => createLayer(`layer${layers.length + 1}`);
 document.getElementById("brush").onclick = (e) => { tool = "brush"; setActiveTool(e.target); };
 document.getElementById("eraser").onclick = (e) => { tool = "eraser"; setActiveTool(e.target); };

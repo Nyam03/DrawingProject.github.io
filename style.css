@@ -68,3 +68,16 @@ body { margin: 0; font-family: sans-serif; background: var(--bg-dark); color: va
 
 .small-btn { background: #444; border: none; color: white; cursor: pointer; border-radius: 3px; padding: 2px 6px; font-size: 12px; }
 .del-btn:hover { background: #f44336; }
+
+.page-tabs { display: flex; gap: 10px; margin-left: 20px; flex: 1; }
+.page-tab { 
+  background: #333; padding: 5px 15px; border-radius: 5px 5px 0 0; 
+  cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 8px;
+}
+.page-tab.active { background: var(--accent); color: white; }
+.page-tab .del-page { font-weight: bold; color: #ff8a80; }
+
+#canvasContainer { background: white; transition: background 0.3s; } /* 배경색 변경 대응 */
+
+/* 페인트통 툴을 위한 커서 */
+.cursor-bucket { cursor: crosshair; }
