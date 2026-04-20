@@ -1,8 +1,11 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
   getFirestore, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, doc, 
-  limit, getDocs, updateDoc, where, writeBatch
+  limit, getDocs, updateDoc, where, writeBatch, setDoc
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { 
+  getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged 
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 // --- 1. Firebase 설정 ---
 const firebaseConfig = {
@@ -16,9 +19,12 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const auth = getAuth(app);
+const provider = new GoogleAuthProvider();
 
 // --- 2. 상태 관리 ---
 const roomId = "room1";
+let currentUser = null; // 현재 로그인 유저 정보
 let currentLayer = "layer1";
 let tool = "brush", color = "#000000", size = 5;
 let layers = []; 
@@ -26,13 +32,59 @@ let canvases = {}, contexts = {};
 let scale = 1, offset = { x: 0, y: 0 };
 let drawing = false, currentStroke = [];
 
-// --- 3. 레이어 관리 함수 ---
+// --- 3. 인증 및 접속자 관리 ---
+const loginOverlay = document.getElementById("loginOverlay");
+const appDiv = document.getElementById("app");
+const googleLoginBtn = document.getElementById("googleLoginBtn");
+
+googleLoginBtn.onclick = () => signInWithPopup(auth, provider);
+
+onAuthStateChanged(auth, async (user) => {
+  if (user) {
+    currentUser = user;
+    loginOverlay.style.display = "none";
+    appDiv.style.display = "flex";
+    
+    // 접속자 정보 등록
+    await setDoc(doc(db, "rooms", roomId, "users", user.uid), {
+      name: user.displayName,
+      photo: user.photoURL,
+      lastActive: Date.now()
+    });
+    
+    initApp();
+    listenUsers();
+  } else {
+    loginOverlay.style.display = "flex";
+    appDiv.style.display = "none";
+  }
+});
+
+function listenUsers() {
+  const userListDiv = document.getElementById("userList");
+  onSnapshot(collection(db, "rooms", roomId, "users"), (snap) => {
+    userListDiv.innerHTML = "";
+    snap.forEach(doc => {
+      const u = doc.data();
+      const chip = document.createElement("div");
+      chip.className = "user-chip";
+      chip.innerHTML = `<img src="${u.photo}">${u.name}`;
+      userListDiv.appendChild(chip);
+    });
+  });
+}
+
+function initApp() {
+  if (layers.length === 0) createLayer("layer1");
+}
+
+// --- 4. 레이어 관리 함수 ---
 function createLayer(layerId) {
   const container = document.getElementById("canvasContainer");
+  if (canvases[layerId]) return;
+
   const canvas = document.createElement("canvas");
-  
-  canvas.width = 1920; 
-  canvas.height = 1080;
+  canvas.width = 1920; canvas.height = 1080;
   canvas.classList.add("layerCanvas");
   canvas.id = `canvas-${layerId}`;
   container.appendChild(canvas);
@@ -50,29 +102,14 @@ function createLayer(layerId) {
 function updateLayerUI() {
   const list = document.getElementById("layersList");
   list.innerHTML = "";
-
   [...layers].sort((a, b) => b.order - a.order).forEach((layer) => {
     const div = document.createElement("div");
     div.className = `layerItem ${currentLayer === layer.id ? "active" : ""}`;
     div.innerHTML = `
-      <div class="layer-top">
-        <span>${layer.id}</span>
-        <div class="layer-controls">
-          <button class="small-btn up-btn">▲</button>
-          <button class="small-btn down-btn">▼</button>
-          <button class="small-btn del-btn">✕</button>
-        </div>
-      </div>
+      <div class="layer-top"><span>${layer.id}</span></div>
       <input type="range" min="0" max="1" step="0.1" value="${layer.opacity}">
     `;
-
     div.onclick = () => { currentLayer = layer.id; updateLayerUI(); };
-    div.querySelector(".up-btn").onclick = (e) => { e.stopPropagation(); moveLayer(layer.id, 1); };
-    div.querySelector(".down-btn").onclick = (e) => { e.stopPropagation(); moveLayer(layer.id, -1); };
-    div.querySelector(".del-btn").onclick = (e) => { 
-      e.stopPropagation(); 
-      if(layers.length > 1) removeLayer(layer.id);
-    };
     div.querySelector("input").oninput = (e) => {
       layer.opacity = e.target.value;
       canvases[layer.id].style.opacity = layer.opacity;
@@ -81,35 +118,12 @@ function updateLayerUI() {
   });
 }
 
-function moveLayer(id, direction) {
-  const idx = layers.findIndex(l => l.id === id);
-  const targetIdx = idx + direction;
-  if (targetIdx >= 0 && targetIdx < layers.length) {
-    [layers[idx].order, layers[targetIdx].order] = [layers[targetIdx].order, layers[idx].order];
-    canvases[layers[idx].id].style.zIndex = layers[idx].order;
-    canvases[layers[targetIdx].id].style.zIndex = layers[targetIdx].order;
-    updateLayerUI();
-  }
-}
-
-async function removeLayer(id) {
-  if (!confirm(`${id}를 삭제하시겠습니까?`)) return;
-  canvases[id].remove();
-  delete canvases[id];
-  delete contexts[id];
-  layers = layers.filter(l => l.id !== id);
-  if (currentLayer === id) currentLayer = layers[0].id;
-  updateLayerUI();
-}
-
-// --- 4. 드로잉 및 좌표 계산 ---
+// --- 5. 드로잉 로직 ---
 function getMousePos(e) {
   const rect = canvases[currentLayer].getBoundingClientRect();
-  const scaleX = canvases[currentLayer].width / rect.width;
-  const scaleY = canvases[currentLayer].height / rect.height;
   return {
-    x: (e.clientX - rect.left) * scaleX,
-    y: (e.clientY - rect.top) * scaleY
+    x: (e.clientX - rect.left) * (canvases[currentLayer].width / rect.width),
+    y: (e.clientY - rect.top) * (canvases[currentLayer].height / rect.height)
   };
 }
 
@@ -120,16 +134,11 @@ function drawSegment(ctx, points) {
   ctx.lineCap = ctx.lineJoin = "round";
   ctx.globalCompositeOperation = tool === "eraser" ? "destination-out" : "source-over";
   ctx.strokeStyle = color;
-  ctx.beginPath();
-  ctx.moveTo(p1.x, p1.y);
-  ctx.lineTo(p2.x, p2.y);
-  ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
 }
 
-// --- 5. Firebase 데이터 동기화 ---
 function listenLayer(layerId) {
   const ref = collection(db, "rooms", roomId, "pages", "page1", "layers", layerId, "strokes");
-  // visible이 true인 데이터만 가져옴
   const q = query(ref, where("visible", "==", true), orderBy("timestamp"));
   
   onSnapshot(q, (snap) => {
@@ -145,54 +154,53 @@ function listenLayer(layerId) {
       s.points.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
       ctx.stroke();
     });
-  }, (err) => {
-    // Firestore 색인(Index) 설정이 안 되어 있을 경우를 대비한 처리
-    console.error("Snapshot error (Check if index is needed):", err);
   });
 }
 
-// --- 6. Undo / Redo 기능 ---
+// --- 6. 사용자별 Undo / Redo (중요!) ---
 
-// Undo: 마지막 visible: true를 찾아 false로 변경
 async function undoLastStroke() {
   const ref = collection(db, "rooms", roomId, "pages", "page1", "layers", currentLayer, "strokes");
-  const q = query(ref, where("visible", "==", true), orderBy("timestamp", "desc"), limit(1));
+  // 내 ID(userId)이면서 보이는 것 중 마지막 데이터 검색
+  const q = query(
+    ref, 
+    where("userId", "==", currentUser.uid), 
+    where("visible", "==", true), 
+    orderBy("timestamp", "desc"), 
+    limit(1)
+  );
   const snap = await getDocs(q);
-  
-  snap.forEach(async (d) => {
-    await updateDoc(doc(db, ref.path, d.id), { visible: false });
-  });
+  snap.forEach(async (d) => await updateDoc(doc(db, ref.path, d.id), { visible: false }));
 }
 
-// Redo: 마지막 visible: false를 찾아 true로 변경
 async function redoLastStroke() {
   const ref = collection(db, "rooms", roomId, "pages", "page1", "layers", currentLayer, "strokes");
-  // 가장 최근에 undone(visible:false) 처리된 문서를 찾음
-  const q = query(ref, where("visible", "==", false), orderBy("timestamp", "desc"), limit(1));
+  // 내 ID(userId)이면서 숨겨진 것 중 마지막 데이터 검색
+  const q = query(
+    ref, 
+    where("userId", "==", currentUser.uid), 
+    where("visible", "==", false), 
+    orderBy("timestamp", "desc"), 
+    limit(1)
+  );
   const snap = await getDocs(q);
-  
-  snap.forEach(async (d) => {
-    await updateDoc(doc(db, ref.path, d.id), { visible: true });
-  });
+  snap.forEach(async (d) => await updateDoc(doc(db, ref.path, d.id), { visible: true }));
 }
 
-// 새로운 선을 그릴 때 Redo 스택(숨겨진 문서들)을 삭제
 async function clearRedoStack() {
   const ref = collection(db, "rooms", roomId, "pages", "page1", "layers", currentLayer, "strokes");
-  const q = query(ref, where("visible", "==", false));
+  const q = query(ref, where("userId", "==", currentUser.uid), where("visible", "==", false));
   const snap = await getDocs(q);
-  
   const batch = writeBatch(db);
   snap.forEach((d) => batch.delete(d.ref));
   await batch.commit();
 }
 
-// --- 7. 이벤트 리스너 설정 ---
+// --- 7. 이벤트 리스너 ---
 
 document.addEventListener("mousedown", (e) => {
-  if (e.target.closest("#canvasContainer")) {
-    drawing = true;
-    currentStroke = [];
+  if (e.target.closest("#canvasContainer") && currentUser) {
+    drawing = true; currentStroke = [];
   }
 });
 
@@ -207,76 +215,58 @@ document.addEventListener("mouseup", async () => {
   if (!drawing || currentStroke.length === 0) { drawing = false; return; }
   drawing = false;
 
-  // 새로운 선을 그리면 기존 Redo 히스토리는 삭제함
   await clearRedoStack();
-
   const ref = collection(db, "rooms", roomId, "pages", "page1", "layers", currentLayer, "strokes");
   await addDoc(ref, {
     points: currentStroke, color, size, tool, 
     timestamp: Date.now(), 
-    visible: true // visible 상태 추가
+    visible: true,
+    userId: currentUser.uid, // 선 데이터에 사용자 ID 저장
+    userName: currentUser.displayName
   });
 });
 
-// 단축키 (Undo: Ctrl+Z / Redo: Ctrl+Shift+Z)
 document.addEventListener("keydown", (e) => {
   const isCtrl = e.ctrlKey || e.metaKey;
-  
   if (isCtrl && e.shiftKey && e.key.toLowerCase() === "z") {
-    // Redo: Ctrl + Shift + Z
-    e.preventDefault();
-    redoLastStroke();
+    e.preventDefault(); redoLastStroke();
   } else if (isCtrl && e.key.toLowerCase() === "z") {
-    // Undo: Ctrl + Z
-    e.preventDefault();
-    undoLastStroke();
+    e.preventDefault(); undoLastStroke();
   }
 });
 
-// 줌 (Wheel)
+// 줌 및 기타 설정 (기존과 동일)
 document.getElementById("viewport").onwheel = (e) => {
   e.preventDefault();
-  const viewport = document.getElementById("viewport");
   const container = document.getElementById("canvasContainer");
-  const rect = viewport.getBoundingClientRect();
+  const rect = document.getElementById("viewport").getBoundingClientRect();
   const mouseX = e.clientX - rect.left, mouseY = e.clientY - rect.top;
   const delta = e.deltaY > 0 ? 0.9 : 1.1;
   const nextScale = Math.min(Math.max(0.1, scale * delta), 10);
-  const worldX = (mouseX - offset.x) / scale;
-  const worldY = (mouseY - offset.y) / scale;
+  const worldX = (mouseX - offset.x) / scale, worldY = (mouseY - offset.y) / scale;
   scale = nextScale;
-  offset.x = mouseX - worldX * scale;
-  offset.y = mouseY - worldY * scale;
+  offset.x = mouseX - worldX * scale; offset.y = mouseY - worldY * scale;
   container.style.transform = `translate(${offset.x}px, ${offset.y}px) scale(${scale})`;
   document.getElementById("zoomLevel").innerText = `${Math.round(scale * 100)}%`;
 };
 
-// 툴 및 설정 변경
 document.getElementById("brush").onclick = (e) => { tool = "brush"; setActiveTool(e.target); };
 document.getElementById("eraser").onclick = (e) => { tool = "eraser"; setActiveTool(e.target); };
 document.getElementById("color").oninput = (e) => color = e.target.value;
-
-const sizeInput = document.getElementById("size");
-const sizeRange = document.getElementById("sizeRange");
+document.getElementById("size").oninput = (e) => updateBrushSize(e.target.value);
+document.getElementById("sizeRange").oninput = (e) => updateBrushSize(e.target.value);
 
 function updateBrushSize(val) {
-  let v = parseInt(val);
-  if (isNaN(v) || v < 1) v = 1;
-  if (v > 100) v = 100;
-  size = v;
-  sizeInput.value = v;
-  sizeRange.value = v;
+  size = Math.min(Math.max(parseInt(val) || 1, 1), 100);
+  document.getElementById("size").value = size;
+  document.getElementById("sizeRange").value = size;
 }
-
-sizeInput.oninput = (e) => updateBrushSize(e.target.value);
-sizeRange.oninput = (e) => updateBrushSize(e.target.value);
 
 function setActiveTool(btn) {
   document.querySelectorAll(".tool-btn").forEach(b => b.classList.remove("active"));
   btn.classList.add("active");
 }
 
-document.getElementById("addLayer").onclick = () => createLayer(`layer${layers.length + 1}`);
 document.getElementById("export").onclick = () => {
   const exportCanvas = document.createElement("canvas");
   exportCanvas.width = 1920; exportCanvas.height = 1080;
@@ -286,9 +276,5 @@ document.getElementById("export").onclick = () => {
     ctx.drawImage(canvases[l.id], 0, 0);
   });
   const link = document.createElement("a");
-  link.download = "drawing.png";
-  link.href = exportCanvas.toDataURL();
-  link.click();
+  link.download = "drawing.png"; link.href = exportCanvas.toDataURL(); link.click();
 };
-
-createLayer("layer1");

@@ -7,11 +7,20 @@
 </head>
 <body>
 
-<div id="app">
-  <header id="topbar">
-    <div class="logo">Nyam DRAW</div>
+<div id="loginOverlay">
+  <div class="login-box">
+    <h2>Nyam DRAW</h2>
+    <p>협업을 시작하려면 구글로 로그인하세요.</p>
+    <button id="googleLoginBtn">Google로 로그인</button>
+  </div>
+</div>
+
+<div id="app" style="display:none;"> <header id="topbar">
+    <div class="logo-area">
+      <div class="logo">Nyam DRAW</div>
+      <div id="userList"></div>
+    </div>
     <div class="actions">
-      <button id="addPage" class="disabled-btn" disabled>+ New Page (Coming Soon)</button>
       <button id="export" class="primary-btn">Export PNG</button>
     </div>
   </header>
@@ -34,7 +43,7 @@
       </div>
       <div class="info">
         <p>Zoom: <span id="zoomLevel">100%</span></p>
-        <p><small>Wheel to Zoom / Ctrl+Z to Undo / Ctrl+Z+Shift to Redo</small></p>
+        <p><small>Ctrl+Z: Undo / Ctrl+Shift+Z: Redo</small></p>
       </div>
     </aside>
 
