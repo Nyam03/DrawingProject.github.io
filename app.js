@@ -23,6 +23,7 @@ let tool = "brush", color = "#000000", size = 5;
 let layers = []; // {id, order, opacity}
 let canvases = {}, contexts = {};
 let scale = 1; // 줌 비율
+let offset = { x: 0, y: 0 };
 
 // 🧱 레이어 생성
 function createLayer(layerId) {
@@ -118,9 +119,33 @@ async function removeLayer(id) {
 // 🔍 줌 기능
 document.getElementById("viewport").onwheel = (e) => {
   e.preventDefault();
+  
+  const viewport = document.getElementById("viewport");
+  const container = document.getElementById("canvasContainer");
+  const rect = viewport.getBoundingClientRect();
+
+  // 1. 현재 마우스의 뷰포트 내 좌표 계산
+  const mouseX = e.clientX - rect.left;
+  const mouseY = e.clientY - rect.top;
+
+  // 2. 줌 배율 결정
   const delta = e.deltaY > 0 ? 0.9 : 1.1;
-  scale = Math.min(Math.max(0.2, scale * delta), 5); // 0.2배 ~ 5배 제한
-  document.getElementById("canvasContainer").style.transform = `scale(${scale})`;
+  const nextScale = Math.min(Math.max(0.1, scale * delta), 10);
+
+  // 3. 마우스 위치의 '월드 좌표(캔버스 기준 좌표)'를 역계산
+  // (현재 마우스 좌표 - 현재 오프셋) / 현재 스케일
+  const worldX = (mouseX - offset.x) / scale;
+  const worldY = (mouseY - offset.y) / scale;
+
+  // 4. 새로운 스케일 적용
+  scale = nextScale;
+
+  // 5. 새로운 스케일에서 마우스 아래의 지점이 동일하게 유지되도록 오프셋 재계산
+  offset.x = mouseX - worldX * scale;
+  offset.y = mouseY - worldY * scale;
+
+  // 6. 변환 적용 (translate와 scale 함께 사용)
+  container.style.transform = `translate(${offset.x}px, ${offset.y}px) scale(${scale})`;
   document.getElementById("zoomLevel").innerText = `${Math.round(scale * 100)}%`;
 };
 
@@ -201,7 +226,12 @@ document.getElementById("addLayer").onclick = () => createLayer(`layer${layers.l
 document.getElementById("brush").onclick = (e) => { tool = "brush"; setActiveTool(e.target); };
 document.getElementById("eraser").onclick = (e) => { tool = "eraser"; setActiveTool(e.target); };
 document.getElementById("color").oninput = (e) => color = e.target.value;
-document.getElementById("size").oninput = (e) => size = e.target.value;
+document.getElementById("size").oninput = (e) => {
+  let val = parseInt(e.target.value);
+  if (isNaN(val) || val < 1) val = 1;
+  if (val > 100) val = 100;
+  size = val;
+};
 
 function setActiveTool(btn) {
   document.querySelectorAll(".tool-btn").forEach(b => b.classList.remove("active"));
