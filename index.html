@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Realtime Paint</title>
+</head>
+<body>
+
+<div id="topbar">
+  <button id="addPage">+ Page</button>
+  <button id="export">Export PNG</button>
+</div>
+
+<div id="container">
+
+  <!-- 좌측 툴 -->
+  <div id="toolbar">
+    <button id="brush">Brush</button>
+    <button id="eraser">Eraser</button>
+    <input type="color" id="color">
+  </div>
+
+  <!-- 중앙 캔버스 -->
+  <div id="canvasContainer"></div>
+
+  <!-- 우측 레이어 -->
+  <div id="layersPanel">
+    <button id="addLayer">+ Layer</button>
+    <div id="layers"></div>
+  </div>
+
+</div>
+
+<div id="pages"></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

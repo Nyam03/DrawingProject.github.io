@@ -1,0 +1,35 @@
+body { margin:0; display:flex; flex-direction:column; }
+
+#container { display:flex; height:90vh; }
+
+#toolbar { width:100px; background:#333; color:white; }
+
+#canvasContainer {
+  flex:1;
+  position:relative;
+  background:#fff;
+}
+
+.layerCanvas {
+  position:absolute;
+  top:0;
+  left:0;
+}
+
+#layersPanel {
+  width:200px;
+  background:#222;
+  color:white;
+}
+
+.layerItem {
+  padding:5px;
+  cursor:pointer;
+}
+
+.active { background:#555; }
+
+#pages {
+  height:50px;
+  background:#111;
+}
