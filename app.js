@@ -1,6 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
-  getFirestore, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, doc, limit, getDocs
+  getFirestore, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, doc, 
+  limit, getDocs, updateDoc, where, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 // --- 1. Firebase 설정 ---
@@ -128,7 +129,10 @@ function drawSegment(ctx, points) {
 // --- 5. Firebase 데이터 동기화 ---
 function listenLayer(layerId) {
   const ref = collection(db, "rooms", roomId, "pages", "page1", "layers", layerId, "strokes");
-  onSnapshot(query(ref, orderBy("timestamp")), (snap) => {
+  // visible이 true인 데이터만 가져옴
+  const q = query(ref, where("visible", "==", true), orderBy("timestamp"));
+  
+  onSnapshot(q, (snap) => {
     const ctx = contexts[layerId];
     if (!ctx) return;
     ctx.clearRect(0, 0, 1920, 1080);
@@ -141,24 +145,50 @@ function listenLayer(layerId) {
       s.points.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
       ctx.stroke();
     });
+  }, (err) => {
+    // Firestore 색인(Index) 설정이 안 되어 있을 경우를 대비한 처리
+    console.error("Snapshot error (Check if index is needed):", err);
   });
 }
 
-// --- 6. Ctrl + Z (Undo) 기능 ---
+// --- 6. Undo / Redo 기능 ---
+
+// Undo: 마지막 visible: true를 찾아 false로 변경
 async function undoLastStroke() {
   const ref = collection(db, "rooms", roomId, "pages", "page1", "layers", currentLayer, "strokes");
-  // 가장 최근 생성된 문서 1개 가져오기
-  const q = query(ref, orderBy("timestamp", "desc"), limit(1));
-  const querySnapshot = await getDocs(q);
+  const q = query(ref, where("visible", "==", true), orderBy("timestamp", "desc"), limit(1));
+  const snap = await getDocs(q);
   
-  querySnapshot.forEach(async (document) => {
-    await deleteDoc(doc(db, ref.path, document.id));
+  snap.forEach(async (d) => {
+    await updateDoc(doc(db, ref.path, d.id), { visible: false });
   });
+}
+
+// Redo: 마지막 visible: false를 찾아 true로 변경
+async function redoLastStroke() {
+  const ref = collection(db, "rooms", roomId, "pages", "page1", "layers", currentLayer, "strokes");
+  // 가장 최근에 undone(visible:false) 처리된 문서를 찾음
+  const q = query(ref, where("visible", "==", false), orderBy("timestamp", "desc"), limit(1));
+  const snap = await getDocs(q);
+  
+  snap.forEach(async (d) => {
+    await updateDoc(doc(db, ref.path, d.id), { visible: true });
+  });
+}
+
+// 새로운 선을 그릴 때 Redo 스택(숨겨진 문서들)을 삭제
+async function clearRedoStack() {
+  const ref = collection(db, "rooms", roomId, "pages", "page1", "layers", currentLayer, "strokes");
+  const q = query(ref, where("visible", "==", false));
+  const snap = await getDocs(q);
+  
+  const batch = writeBatch(db);
+  snap.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
 }
 
 // --- 7. 이벤트 리스너 설정 ---
 
-// 그리기 시작/종료
 document.addEventListener("mousedown", (e) => {
   if (e.target.closest("#canvasContainer")) {
     drawing = true;
@@ -176,15 +206,28 @@ document.addEventListener("mousemove", (e) => {
 document.addEventListener("mouseup", async () => {
   if (!drawing || currentStroke.length === 0) { drawing = false; return; }
   drawing = false;
+
+  // 새로운 선을 그리면 기존 Redo 히스토리는 삭제함
+  await clearRedoStack();
+
   const ref = collection(db, "rooms", roomId, "pages", "page1", "layers", currentLayer, "strokes");
   await addDoc(ref, {
-    points: currentStroke, color, size, tool, timestamp: Date.now()
+    points: currentStroke, color, size, tool, 
+    timestamp: Date.now(), 
+    visible: true // visible 상태 추가
   });
 });
 
-// 단축키 (Ctrl + Z)
+// 단축키 (Undo: Ctrl+Z / Redo: Ctrl+Shift+Z)
 document.addEventListener("keydown", (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+  const isCtrl = e.ctrlKey || e.metaKey;
+  
+  if (isCtrl && e.shiftKey && e.key.toLowerCase() === "z") {
+    // Redo: Ctrl + Shift + Z
+    e.preventDefault();
+    redoLastStroke();
+  } else if (isCtrl && e.key.toLowerCase() === "z") {
+    // Undo: Ctrl + Z
     e.preventDefault();
     undoLastStroke();
   }
@@ -213,7 +256,6 @@ document.getElementById("brush").onclick = (e) => { tool = "brush"; setActiveToo
 document.getElementById("eraser").onclick = (e) => { tool = "eraser"; setActiveTool(e.target); };
 document.getElementById("color").oninput = (e) => color = e.target.value;
 
-// 브러쉬 크기 (숫자 입력창 & 슬라이더 연동)
 const sizeInput = document.getElementById("size");
 const sizeRange = document.getElementById("sizeRange");
 
@@ -234,7 +276,6 @@ function setActiveTool(btn) {
   btn.classList.add("active");
 }
 
-// 레이어 추가 및 내보내기
 document.getElementById("addLayer").onclick = () => createLayer(`layer${layers.length + 1}`);
 document.getElementById("export").onclick = () => {
   const exportCanvas = document.createElement("canvas");
@@ -250,5 +291,4 @@ document.getElementById("export").onclick = () => {
   link.click();
 };
 
-// 초기 실행
 createLayer("layer1");
