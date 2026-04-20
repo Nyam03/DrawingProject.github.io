@@ -70,13 +70,31 @@ body { margin: 0; font-family: sans-serif; background: var(--bg-dark); color: va
 .del-btn:hover { background: #f44336; }
 
 .page-tabs { display: flex; gap: 10px; margin-left: 20px; flex: 1; }
-.page-tab { 
-  background: #333; padding: 5px 15px; border-radius: 5px 5px 0 0; 
-  cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 8px;
+.page-tab {
+  padding: 8px 16px;
+  background: #2a2a2a;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
 }
-.page-tab.active { background: var(--accent); color: white; }
-.page-tab .del-page { font-weight: bold; color: #ff8a80; }
 
+.page-tab.active {
+  background: #3d5afe; /* 파란색 강조 */
+  border-bottom: 3px solid white;
+}
+
+.layer-item.active {
+  background: #3d5afe;
+  color: white;
+}
+
+.del-page-btn {
+  margin-left: 8px;
+  background: none;
+  border: none;
+  color: #ff5252;
+  cursor: pointer;
+}
 #canvasContainer { background: white; transition: background 0.3s; } /* 배경색 변경 대응 */
 
 /* 페인트통 툴을 위한 커서 */
