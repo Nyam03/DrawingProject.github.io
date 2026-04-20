@@ -69,33 +69,30 @@ body { margin: 0; font-family: sans-serif; background: var(--bg-dark); color: va
 .small-btn { background: #444; border: none; color: white; cursor: pointer; border-radius: 3px; padding: 2px 6px; font-size: 12px; }
 .del-btn:hover { background: #f44336; }
 
-.page-tabs { display: flex; gap: 10px; margin-left: 20px; flex: 1; }
-.page-tab {
-  padding: 8px 16px;
-  background: #2a2a2a;
-  border-radius: 6px 6px 0 0;
+/* 비활성화 버튼 스타일 */
+.disabled-btn {
+  background: #333;
+  color: #777;
+  border: 1px solid var(--border);
+  cursor: not-allowed;
+  padding: 6px 12px;
+  border-radius: 4px;
+}
+
+/* 브러쉬 슬라이더 스타일 */
+.size-slider {
+  width: 60px;
+  margin-top: 5px;
   cursor: pointer;
-  border-bottom: 3px solid transparent;
+  accent-color: var(--accent);
 }
 
-.page-tab.active {
-  background: #3d5afe; /* 파란색 강조 */
-  border-bottom: 3px solid white;
+.tool-group {
+  margin-bottom: 10px;
 }
 
-.layer-item.active {
-  background: #3d5afe;
-  color: white;
+/* 캔버스 컨테이너 줌 전환 부드럽게 */
+#canvasContainer {
+  /* ... */
+  transition: transform 0.1s ease-out; /* 줌 감도에 맞게 조절 */
 }
-
-.del-page-btn {
-  margin-left: 8px;
-  background: none;
-  border: none;
-  color: #ff5252;
-  cursor: pointer;
-}
-#canvasContainer { background: white; transition: background 0.3s; } /* 배경색 변경 대응 */
-
-/* 페인트통 툴을 위한 커서 */
-.cursor-bucket { cursor: crosshair; }

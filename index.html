@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <title>Collaborative Pro Paint - V2</title>
+  <title>Collaborative Pro Paint</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -10,10 +10,9 @@
 <div id="app">
   <header id="topbar">
     <div class="logo">PRO DRAW</div>
-    <div id="pageTabs" class="page-tabs">
-      </div>
     <div class="actions">
-      <button id="addPage" class="small-btn">+ Page</button>
+      <button id="addPage" class="disabled-btn" disabled>+ New Page (Coming Soon)</button>
+      <button id="export" class="primary-btn">Export PNG</button>
     </div>
   </header>
 
@@ -23,23 +22,19 @@
         <label>Tools</label>
         <button id="brush" class="tool-btn active" title="Brush">🖌️</button>
         <button id="eraser" class="tool-btn" title="Eraser">🧼</button>
-        <button id="bucket" class="tool-btn" title="Paint Bucket">🪣</button>
-        <button id="lasso" class="tool-btn" title="Lasso">✂️</button>
       </div>
       <div class="tool-group">
         <label>Color</label>
         <input type="color" id="color" value="#000000">
       </div>
       <div class="tool-group">
-        <label>BG Color</label>
-        <input type="color" id="bgColor" value="#ffffff">
-      </div>
-      <div class="tool-group">
         <label>Size (px)</label>
         <input type="number" id="size" min="1" max="100" value="5" class="size-input">
+        <input type="range" id="sizeRange" min="1" max="100" value="5" class="size-slider">
       </div>
       <div class="info">
         <p>Zoom: <span id="zoomLevel">100%</span></p>
+        <p><small>Wheel to Zoom / Ctrl+Z to Undo</small></p>
       </div>
     </aside>
 

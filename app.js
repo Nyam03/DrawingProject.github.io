@@ -1,9 +1,9 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
-  getFirestore, collection, addDoc, onSnapshot, query, orderBy, 
-  deleteDoc, doc, updateDoc, setDoc, getDocs
+  getFirestore, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, doc, limit, getDocs
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
+// --- 1. Firebase 설정 ---
 const firebaseConfig = {
   apiKey: "AIzaSyAje85hdqJ9iEZuvL57ZYL2HJa8vUZcGBc",
   authDomain: "drawingproject-ae35d.firebaseapp.com",
@@ -16,203 +16,239 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// 전역 상태
+// --- 2. 상태 관리 ---
 const roomId = "room1";
-let currentPageId = "page1";
-let currentLayerId = "layer1";
+let currentLayer = "layer1";
 let tool = "brush", color = "#000000", size = 5;
+let layers = []; 
+let canvases = {}, contexts = {};
 let scale = 1, offset = { x: 0, y: 0 };
 let drawing = false, currentStroke = [];
 
-let layers = []; 
-let canvases = {}, contexts = {};
-let unsubscribes = []; // 페이지 전환 시 모든 리스너 해제용
-
-// 1. 초기 실행 및 페이지 감시
-async function init() {
-  const pagesRef = collection(db, "rooms", roomId, "pages");
-  const q = query(pagesRef, orderBy("order", "asc"));
-
-  onSnapshot(q, (snap) => {
-    const pageTabs = document.getElementById("pageTabs");
-    pageTabs.innerHTML = "";
-    
-    if (snap.empty) {
-      // 페이지가 하나도 없으면 기본 페이지 생성
-      setupFirstPage();
-      return;
-    }
-
-    snap.forEach(docSnap => {
-      const pId = docSnap.id;
-      const tab = document.createElement("div");
-      tab.className = `page-tab ${pId === currentPageId ? "active" : ""}`;
-      tab.innerHTML = `<span>${pId}</span> <button class="del-page-btn">✕</button>`;
-      
-      tab.onclick = () => switchPage(pId);
-      tab.querySelector(".del-page-btn").onclick = (e) => {
-        e.stopPropagation();
-        deletePage(pId);
-      };
-      
-      pageTabs.appendChild(tab);
-    });
-  });
-
-  // 첫 진입 시 수동 호출
-  switchPage(currentPageId);
-}
-
-// 2. 페이지 전환 함수 (가장 중요)
-async function switchPage(pId) {
-  currentPageId = pId;
-  
-  // 기존 리스너 해제
-  unsubscribes.forEach(unsub => unsub());
-  unsubscribes = [];
-
-  // UI 초기화
-  const container = document.getElementById("canvasContainer");
-  container.innerHTML = "";
-  canvases = {}; contexts = {}; layers = [];
-  document.getElementById("layersList").innerHTML = "";
-
-  // 페이지 배경색 적용
-  const pageRef = doc(db, "rooms", roomId, "pages", pId);
-  const pageSnap = onSnapshot(pageRef, (d) => {
-    if (d.exists()) {
-      container.style.backgroundColor = d.data().bgColor || "#ffffff";
-    }
-  });
-  unsubscribes.push(pageSnap);
-
-  // 해당 페이지의 레이어들 불러오기
-  const layersRef = collection(db, "rooms", roomId, "pages", pId, "layers");
-  const layerSnap = await getDocs(layersRef);
-
-  if (layerSnap.empty) {
-    // 레이어가 없으면 기본 레이어1 생성
-    await createLayer("layer1");
-  } else {
-    layerSnap.forEach(lDoc => {
-      renderLayerCanvas(lDoc.id);
-      listenStrokes(lDoc.id);
-    });
-  }
-}
-
-// 3. 레이어 생성 및 DOM 반영
-async function createLayer(lId) {
-  const layerRef = doc(db, "rooms", roomId, "pages", currentPageId, "layers", lId);
-  await setDoc(layerRef, { order: layers.length, opacity: 1 });
-  
-  renderLayerCanvas(lId);
-  listenStrokes(lId);
-}
-
-function renderLayerCanvas(lId) {
+// --- 3. 레이어 관리 함수 ---
+function createLayer(layerId) {
   const container = document.getElementById("canvasContainer");
   const canvas = document.createElement("canvas");
-  canvas.width = 1920; canvas.height = 1080;
-  canvas.id = `canvas-${lId}`;
-  canvas.className = "layerCanvas";
+  
+  canvas.width = 1920; 
+  canvas.height = 1080;
+  canvas.classList.add("layerCanvas");
+  canvas.id = `canvas-${layerId}`;
   container.appendChild(canvas);
 
-  canvases[lId] = canvas;
-  contexts[lId] = canvas.getContext("2d", { willReadFrequently: true });
-  currentLayerId = lId;
+  canvases[layerId] = canvas;
+  contexts[layerId] = canvas.getContext("2d");
 
-  // 레이어 패널 UI 업데이트
-  updateLayerUI(lId);
-}
-
-// 4. 스트로크 실시간 동기화
-function listenStrokes(lId) {
-  const strokesRef = collection(db, "rooms", roomId, "pages", currentPageId, "layers", lId, "strokes");
-  const q = query(strokesRef, orderBy("timestamp", "asc"));
-
-  const unsub = onSnapshot(q, (snap) => {
-    const ctx = contexts[lId];
-    if (!ctx) return;
-    ctx.clearRect(0, 0, 1920, 1080);
-    
-    snap.forEach(d => {
-      const data = d.data();
-      drawStroke(ctx, data);
-    });
-  });
-  unsubscribes.push(unsub);
-}
-
-// 5. 드로잉 이벤트
-document.getElementById("canvasContainer").onmousedown = (e) => {
-  drawing = true;
-  currentStroke = [];
-};
-
-document.onmousemove = (e) => {
-  if (!drawing) return;
-  const pos = getMousePos(e);
-  currentStroke.push(pos);
+  const newLayer = { id: layerId, order: layers.length, opacity: 1 };
+  layers.push(newLayer);
   
-  // 실시간 피드백 (내 화면에만 미리 그리기)
-  const ctx = contexts[currentLayerId];
-  if (ctx) {
-    ctx.lineWidth = size;
-    ctx.strokeStyle = color;
-    ctx.lineCap = "round";
-    ctx.lineTo(pos.x, pos.y);
-    ctx.stroke();
+  listenLayer(layerId);
+  updateLayerUI();
+}
+
+function updateLayerUI() {
+  const list = document.getElementById("layersList");
+  list.innerHTML = "";
+
+  [...layers].sort((a, b) => b.order - a.order).forEach((layer) => {
+    const div = document.createElement("div");
+    div.className = `layerItem ${currentLayer === layer.id ? "active" : ""}`;
+    div.innerHTML = `
+      <div class="layer-top">
+        <span>${layer.id}</span>
+        <div class="layer-controls">
+          <button class="small-btn up-btn">▲</button>
+          <button class="small-btn down-btn">▼</button>
+          <button class="small-btn del-btn">✕</button>
+        </div>
+      </div>
+      <input type="range" min="0" max="1" step="0.1" value="${layer.opacity}">
+    `;
+
+    div.onclick = () => { currentLayer = layer.id; updateLayerUI(); };
+    div.querySelector(".up-btn").onclick = (e) => { e.stopPropagation(); moveLayer(layer.id, 1); };
+    div.querySelector(".down-btn").onclick = (e) => { e.stopPropagation(); moveLayer(layer.id, -1); };
+    div.querySelector(".del-btn").onclick = (e) => { 
+      e.stopPropagation(); 
+      if(layers.length > 1) removeLayer(layer.id);
+    };
+    div.querySelector("input").oninput = (e) => {
+      layer.opacity = e.target.value;
+      canvases[layer.id].style.opacity = layer.opacity;
+    };
+    list.appendChild(div);
+  });
+}
+
+function moveLayer(id, direction) {
+  const idx = layers.findIndex(l => l.id === id);
+  const targetIdx = idx + direction;
+  if (targetIdx >= 0 && targetIdx < layers.length) {
+    [layers[idx].order, layers[targetIdx].order] = [layers[targetIdx].order, layers[idx].order];
+    canvases[layers[idx].id].style.zIndex = layers[idx].order;
+    canvases[layers[targetIdx].id].style.zIndex = layers[targetIdx].order;
+    updateLayerUI();
   }
-};
+}
 
-document.onmouseup = async () => {
-  if (!drawing) return;
-  drawing = false;
-  
-  if (currentStroke.length < 2) return;
+async function removeLayer(id) {
+  if (!confirm(`${id}를 삭제하시겠습니까?`)) return;
+  canvases[id].remove();
+  delete canvases[id];
+  delete contexts[id];
+  layers = layers.filter(l => l.id !== id);
+  if (currentLayer === id) currentLayer = layers[0].id;
+  updateLayerUI();
+}
 
-  const strokesRef = collection(db, "rooms", roomId, "pages", currentPageId, "layers", currentLayerId, "strokes");
-  await addDoc(strokesRef, {
-    points: currentStroke,
-    color,
-    size,
-    tool,
-    timestamp: Date.now()
-  });
-};
-
-// 헬퍼 함수: 마우스 좌표 계산
+// --- 4. 드로잉 및 좌표 계산 ---
 function getMousePos(e) {
-  const rect = document.getElementById("canvasWrapper").getBoundingClientRect();
+  const rect = canvases[currentLayer].getBoundingClientRect();
+  const scaleX = canvases[currentLayer].width / rect.width;
+  const scaleY = canvases[currentLayer].height / rect.height;
   return {
-    x: (e.clientX - rect.left - offset.x) / scale,
-    y: (e.clientY - rect.top - offset.y) / scale
+    x: (e.clientX - rect.left) * scaleX,
+    y: (e.clientY - rect.top) * scaleY
   };
 }
 
-function drawStroke(ctx, data) {
-  ctx.beginPath();
-  ctx.lineWidth = data.size;
-  ctx.strokeStyle = data.color;
-  ctx.globalCompositeOperation = data.tool === "eraser" ? "destination-out" : "source-over";
+function drawSegment(ctx, points) {
+  if (points.length < 2) return;
+  const p1 = points[points.length - 2], p2 = points[points.length - 1];
+  ctx.lineWidth = size;
   ctx.lineCap = ctx.lineJoin = "round";
-  
-  data.points.forEach((p, i) => {
-    if (i === 0) ctx.moveTo(p.x, p.y);
-    else ctx.lineTo(p.x, p.y);
-  });
+  ctx.globalCompositeOperation = tool === "eraser" ? "destination-out" : "source-over";
+  ctx.strokeStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(p1.x, p1.y);
+  ctx.lineTo(p2.x, p2.y);
   ctx.stroke();
 }
 
-function updateLayerUI(lId) {
-  const list = document.getElementById("layersList");
-  const div = document.createElement("div");
-  div.className = `layer-item ${lId === currentLayerId ? "active" : ""}`;
-  div.innerHTML = `<span>${lId}</span>`;
-  div.onclick = () => { currentLayerId = lId; };
-  list.appendChild(div);
+// --- 5. Firebase 데이터 동기화 ---
+function listenLayer(layerId) {
+  const ref = collection(db, "rooms", roomId, "pages", "page1", "layers", layerId, "strokes");
+  onSnapshot(query(ref, orderBy("timestamp")), (snap) => {
+    const ctx = contexts[layerId];
+    if (!ctx) return;
+    ctx.clearRect(0, 0, 1920, 1080);
+    snap.forEach(doc => {
+      const s = doc.data();
+      ctx.lineWidth = s.size;
+      ctx.strokeStyle = s.color;
+      ctx.globalCompositeOperation = s.tool === "eraser" ? "destination-out" : "source-over";
+      ctx.beginPath();
+      s.points.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+      ctx.stroke();
+    });
+  });
 }
 
-// 초기화 호출
-init();
+// --- 6. Ctrl + Z (Undo) 기능 ---
+async function undoLastStroke() {
+  const ref = collection(db, "rooms", roomId, "pages", "page1", "layers", currentLayer, "strokes");
+  // 가장 최근 생성된 문서 1개 가져오기
+  const q = query(ref, orderBy("timestamp", "desc"), limit(1));
+  const querySnapshot = await getDocs(q);
+  
+  querySnapshot.forEach(async (document) => {
+    await deleteDoc(doc(db, ref.path, document.id));
+  });
+}
+
+// --- 7. 이벤트 리스너 설정 ---
+
+// 그리기 시작/종료
+document.addEventListener("mousedown", (e) => {
+  if (e.target.closest("#canvasContainer")) {
+    drawing = true;
+    currentStroke = [];
+  }
+});
+
+document.addEventListener("mousemove", (e) => {
+  if (!drawing) return;
+  const pos = getMousePos(e);
+  currentStroke.push(pos);
+  drawSegment(contexts[currentLayer], currentStroke);
+});
+
+document.addEventListener("mouseup", async () => {
+  if (!drawing || currentStroke.length === 0) { drawing = false; return; }
+  drawing = false;
+  const ref = collection(db, "rooms", roomId, "pages", "page1", "layers", currentLayer, "strokes");
+  await addDoc(ref, {
+    points: currentStroke, color, size, tool, timestamp: Date.now()
+  });
+});
+
+// 단축키 (Ctrl + Z)
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+    e.preventDefault();
+    undoLastStroke();
+  }
+});
+
+// 줌 (Wheel)
+document.getElementById("viewport").onwheel = (e) => {
+  e.preventDefault();
+  const viewport = document.getElementById("viewport");
+  const container = document.getElementById("canvasContainer");
+  const rect = viewport.getBoundingClientRect();
+  const mouseX = e.clientX - rect.left, mouseY = e.clientY - rect.top;
+  const delta = e.deltaY > 0 ? 0.9 : 1.1;
+  const nextScale = Math.min(Math.max(0.1, scale * delta), 10);
+  const worldX = (mouseX - offset.x) / scale;
+  const worldY = (mouseY - offset.y) / scale;
+  scale = nextScale;
+  offset.x = mouseX - worldX * scale;
+  offset.y = mouseY - worldY * scale;
+  container.style.transform = `translate(${offset.x}px, ${offset.y}px) scale(${scale})`;
+  document.getElementById("zoomLevel").innerText = `${Math.round(scale * 100)}%`;
+};
+
+// 툴 및 설정 변경
+document.getElementById("brush").onclick = (e) => { tool = "brush"; setActiveTool(e.target); };
+document.getElementById("eraser").onclick = (e) => { tool = "eraser"; setActiveTool(e.target); };
+document.getElementById("color").oninput = (e) => color = e.target.value;
+
+// 브러쉬 크기 (숫자 입력창 & 슬라이더 연동)
+const sizeInput = document.getElementById("size");
+const sizeRange = document.getElementById("sizeRange");
+
+function updateBrushSize(val) {
+  let v = parseInt(val);
+  if (isNaN(v) || v < 1) v = 1;
+  if (v > 100) v = 100;
+  size = v;
+  sizeInput.value = v;
+  sizeRange.value = v;
+}
+
+sizeInput.oninput = (e) => updateBrushSize(e.target.value);
+sizeRange.oninput = (e) => updateBrushSize(e.target.value);
+
+function setActiveTool(btn) {
+  document.querySelectorAll(".tool-btn").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+}
+
+// 레이어 추가 및 내보내기
+document.getElementById("addLayer").onclick = () => createLayer(`layer${layers.length + 1}`);
+document.getElementById("export").onclick = () => {
+  const exportCanvas = document.createElement("canvas");
+  exportCanvas.width = 1920; exportCanvas.height = 1080;
+  const ctx = exportCanvas.getContext("2d");
+  layers.sort((a,b) => a.order - b.order).forEach(l => {
+    ctx.globalAlpha = l.opacity;
+    ctx.drawImage(canvases[l.id], 0, 0);
+  });
+  const link = document.createElement("a");
+  link.download = "drawing.png";
+  link.href = exportCanvas.toDataURL();
+  link.click();
+};
+
+// 초기 실행
+createLayer("layer1");
