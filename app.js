@@ -84,7 +84,6 @@ document.getElementById("addLayer").onclick = () => {
     alert("레이어는 최대 5개까지만 생성 가능합니다.");
     return;
   }
-  // 사용 가능한 가장 작은 번호 찾기 (Layer 1~5)
   const existingNums = layers.map(l => parseInt(l.displayName.replace("Layer ", "")) || 0);
   let nextNum = 1;
   while(existingNums.includes(nextNum)) nextNum++;
@@ -201,7 +200,7 @@ function updateLayerUI() {
   });
 }
 
-// --- 5. 드로잉 로직 (경로 통일: "strokes" 컬렉션 사용) ---
+// --- 5. 드로잉 로직 ---
 
 function listenLayer(layerId) {
   if (unsubscribes[layerId]) unsubscribes[layerId]();
@@ -235,11 +234,28 @@ function listenLayer(layerId) {
   });
 }
 
-function getMousePos(e) {
-  const rect = canvases[currentLayer].getBoundingClientRect();
+/**
+ * 터치와 마우스 좌표를 모두 계산하는 통합 함수
+ */
+function getEventPos(e) {
+  const canvas = canvases[currentLayer];
+  if (!canvas) return { x: 0, y: 0 };
+  
+  const rect = canvas.getBoundingClientRect();
+  let clientX, clientY;
+
+  // 터치 이벤트인 경우 첫 번째 터치 지점 좌표 사용
+  if (e.touches && e.touches.length > 0) {
+    clientX = e.touches[0].clientX;
+    clientY = e.touches[0].clientY;
+  } else {
+    clientX = e.clientX;
+    clientY = e.clientY;
+  }
+
   return {
-    x: (e.clientX - rect.left) * (canvases[currentLayer].width / rect.width),
-    y: (e.clientY - rect.top) * (canvases[currentLayer].height / rect.height)
+    x: (clientX - rect.left) * (canvas.width / rect.width),
+    y: (clientY - rect.top) * (canvas.height / rect.height)
   };
 }
 
@@ -252,7 +268,7 @@ function drawSegment(ctx, points) {
   ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
 }
 
-// --- 6. Undo / Redo / Reset (경로 통일) ---
+// --- 6. Undo / Redo / Reset ---
 
 async function undoLastStroke() {
   const q = query(
@@ -296,7 +312,6 @@ async function clearRedoStack() {
   await batch.commit();
 }
 
-// 리셋 버튼: 모든 레이어의 선 데이터를 한 번에 삭제
 document.getElementById('reset-btn').onclick = async () => {
   if (!confirm("모든 레이어의 그림을 초기화하시겠습니까?")) return;
   try {
@@ -313,31 +328,51 @@ document.getElementById('reset-btn').onclick = async () => {
   } catch (e) { console.error(e); }
 };
 
-// --- 7. 이벤트 리스너 ---
+// --- 7. 통합 이벤트 리스너 (마우스 & 터치) ---
 
-document.addEventListener("mousedown", (e) => {
+const startDrawing = (e) => {
   if (e.target.closest("#canvasContainer") && currentUser) {
-    drawing = true; currentStroke = [];
+    // 터치 시 화면 스크롤 방지
+    if (e.type === 'touchstart') e.preventDefault();
+    drawing = true; 
+    currentStroke = [];
+    const pos = getEventPos(e);
+    currentStroke.push(pos);
   }
-});
+};
 
-document.addEventListener("mousemove", (e) => {
+const moveDrawing = (e) => {
   if (!drawing) return;
-  const pos = getMousePos(e);
+  // 터치 시 화면 스크롤 방지
+  if (e.type === 'touchmove') e.preventDefault();
+  
+  const pos = getEventPos(e);
   currentStroke.push(pos);
   drawSegment(contexts[currentLayer], currentStroke);
-});
+};
 
-document.addEventListener("mouseup", async () => {
+const stopDrawing = async (e) => {
   if (!drawing || currentStroke.length === 0) { drawing = false; return; }
   drawing = false;
+  
+  // DB에 저장
   await clearRedoStack();
   await addDoc(collection(db, "strokes"), {
     roomId, layerId: currentLayer, points: currentStroke, 
     color, size, tool, timestamp: Date.now(), visible: true,
     userId: currentUser.uid, userName: currentUser.displayName
   });
-});
+};
+
+// 마우스 리스너
+document.addEventListener("mousedown", startDrawing);
+document.addEventListener("mousemove", moveDrawing);
+document.addEventListener("mouseup", stopDrawing);
+
+// 터치 리스너 (모바일 대응) - { passive: false }는 preventDefault를 사용하기 위함
+document.addEventListener("touchstart", startDrawing, { passive: false });
+document.addEventListener("touchmove", moveDrawing, { passive: false });
+document.addEventListener("touchend", stopDrawing, { passive: false });
 
 document.addEventListener("keydown", (e) => {
   const isCtrl = e.ctrlKey || e.metaKey;
@@ -345,7 +380,7 @@ document.addEventListener("keydown", (e) => {
   else if (isCtrl && e.key.toLowerCase() === "z") { e.preventDefault(); undoLastStroke(); }
 });
 
-// 줌 설정
+// 줌 설정 (마우스 휠 유지)
 document.getElementById("viewport").onwheel = (e) => {
   e.preventDefault();
   const container = document.getElementById("canvasContainer");
