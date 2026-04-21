@@ -132,3 +132,18 @@ body { margin: 0; font-family: sans-serif; background: var(--bg-dark); color: va
 #reset-btn:hover {
   background-color: #cc0000;
 }
+
+#userList {
+  display: flex;
+  gap: 8px;
+  margin-left: 15px;
+  align-items: center;
+}
+
+.user-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  object-fit: cover;
+}

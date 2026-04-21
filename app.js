@@ -31,6 +31,7 @@ let layers = [];
 let canvases = {}, contexts = {};
 let scale = 1, offset = { x: 0, y: 0 };
 let drawing = false, currentStroke = [];
+let heartbeatInterval;
 
 // --- 3. 인증 및 접속자 관리 ---
 const loginOverlay = document.getElementById("loginOverlay");
@@ -39,38 +40,67 @@ const googleLoginBtn = document.getElementById("googleLoginBtn");
 
 googleLoginBtn.onclick = () => signInWithPopup(auth, provider);
 
-onAuthStateChanged(auth, async (user) => {
+async function updatePresence(user) {
+  if (!user) return;
+  const userRef = doc(db, "rooms", roomId, "users", user.uid);
+  await setDoc(userRef, {
+    name: user.displayName || "익명",
+    photo: user.photoURL || "",
+    lastSeen: Date.now(), // 현재 시간을 기록
+    online: true
+  }, { merge: true });
+}
+
+// 2. 활동 중단(나감) 처리 함수
+async function setOffline(uid) {
+  if (!uid) return;
+  const userRef = doc(db, "rooms", roomId, "users", uid);
+  await updateDoc(userRef, { online: false });
+}
+
+onAuthStateChanged(auth, (user) => {
   if (user) {
-    currentUser = user;
     loginOverlay.style.display = "none";
-    appDiv.style.display = "flex";
+    appContainer.style.display = "flex";
     
-    // 접속자 정보 등록
-    await setDoc(doc(db, "rooms", roomId, "users", user.uid), {
-      name: user.displayName,
-      photo: user.photoURL,
-      lastActive: Date.now()
-    });
+    // 접속하자마자 상태 업데이트
+    updatePresence(user);
+
+    // 30초마다 나 아직 있다고 신호 보내기 (Heartbeat)
+    if (heartbeatInterval) clearInterval(heartbeatInterval);
+    heartbeatInterval = setInterval(() => updatePresence(user), 60000);
+
+    // 창을 닫거나 나갈 때 오프라인 처리
+    window.addEventListener('beforeunload', () => setOffline(user.uid));
     
-    initApp();
-    listenUsers();
-    listenResetTrigger();
+    listenUserList();
+    layers.forEach(l => listenLayer(l.id));
   } else {
     loginOverlay.style.display = "flex";
-    appDiv.style.display = "none";
+    appContainer.style.display = "none";
   }
 });
 
-function listenUsers() {
-  const userListDiv = document.getElementById("userList");
-  onSnapshot(collection(db, "rooms", roomId, "users"), (snap) => {
+// 3. 사용자 리스트 감시 (일정 시간 지난 사람 필터링)
+function listenUserList() {
+  const usersRef = collection(db, "rooms", roomId, "users");
+  onSnapshot(usersRef, (snapshot) => {
+    const userListDiv = document.getElementById("userList");
     userListDiv.innerHTML = "";
-    snap.forEach(doc => {
-      const u = doc.data();
-      const chip = document.createElement("div");
-      chip.className = "user-chip";
-      chip.innerHTML = `<img src="${u.photo}">${u.name}`;
-      userListDiv.appendChild(chip);
+    
+    const now = Date.now();
+    const threshold = 5 * 60 * 1000;
+
+    snapshot.docs.forEach((docSnap) => {
+      const userData = docSnap.data();
+      
+      if (userData.online && (now - userData.lastSeen < threshold)) {
+        const img = document.createElement("img");
+        img.src = userData.photo || "https://via.placeholder.com/30";
+        img.title = userData.name;
+        img.className = "user-avatar";
+        userListDiv.appendChild(img);
+      }
     });
   });
 }
@@ -332,7 +362,7 @@ resetBtn.addEventListener('click', async () => {
     await setDoc(doc(db, "rooms", roomId), {
       resetAt: Date.now()
     }, { merge: true });
-    
+
     alert("캔버스가 완전히 초기화되었습니다.");
 
   } catch (error) {
