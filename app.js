@@ -278,3 +278,36 @@ document.getElementById("export").onclick = () => {
   const link = document.createElement("a");
   link.download = "drawing.png"; link.href = exportCanvas.toDataURL(); link.click();
 };
+
+const resetBtn = document.getElementById('reset-btn');
+
+resetBtn.addEventListener('click', async () => {
+  if (!confirm("정말로 캔버스를 초기화하시겠습니까? 모든 그림이 사라집니다.")) return;
+
+  try {
+    // 1. 현재 화면에 보이고 있는(visible == true) 모든 스트로크 가져오기
+    const q = query(collection(db, "strokes"), where("visible", "==", true));
+    const querySnapshot = await getDocs(q);
+
+    if (querySnapshot.empty) {
+      alert("이미 비어있는 상태입니다.");
+      return;
+    }
+
+    // 2. 일괄 업데이트 (Batch 처리)를 사용하여 효율적으로 데이터 처리
+    const batch = writeBatch(db);
+    
+    querySnapshot.forEach((doc) => {
+      batch.delete(doc.ref)
+    });
+
+    await batch.commit();
+  
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    alert("캔버스가 초기화되었습니다.");
+  } catch (error) {
+    console.error("초기화 중 오류 발생:", error);
+    alert("초기화에 실패했습니다.");
+  }
+});
