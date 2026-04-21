@@ -2,8 +2,9 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <title>Collaborative Pro Paint</title>
+  <title>Nyam DRAW - Collaborative Paint</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
 <body>
 
@@ -11,18 +12,19 @@
   <div class="login-box">
     <h2>Nyam DRAW</h2>
     <p>협업을 시작하려면 구글로 로그인하세요.</p>
-    <button id="googleLoginBtn">Google로 로그인</button>
+    <button id="googleLoginBtn"><i class="fab fa-google"></i> Google로 로그인</button>
   </div>
 </div>
 
-<div id="app" style="display:none;"> <header id="topbar">
+<div id="app" style="display:none;">
+  <header id="topbar">
     <div class="logo-area">
       <div class="logo">Nyam DRAW</div>
       <div id="userList"></div>
     </div>
     <div class="actions">
-      <button id="export" class="primary-btn">Export PNG</button>
-      <button id="reset-btn" title="캔버스 초기화">
+      <button id="export" class="primary-btn">PNG 내보내기</button>
+      <button id="reset-btn" class="danger-btn" title="캔버스 초기화">
         <i class="fas fa-trash-alt"></i> 리셋
       </button>
     </div>
@@ -31,35 +33,36 @@
   <div id="main-container">
     <aside id="toolbar">
       <div class="tool-group">
-        <label>Tools</label>
-        <button id="brush" class="tool-btn active" title="Brush">🖌️</button>
-        <button id="eraser" class="tool-btn" title="Eraser">🧼</button>
+        <label>도구</label>
+        <button id="brush" class="tool-btn active" title="브러쉬">🖌️</button>
+        <button id="eraser" class="tool-btn" title="지우개">🧼</button>
       </div>
       <div class="tool-group">
-        <label>Color</label>
+        <label>색상</label>
         <input type="color" id="color" value="#000000">
       </div>
       <div class="tool-group">
-        <label>Size (px)</label>
+        <label>크기</label>
         <input type="number" id="size" min="1" max="100" value="5" class="size-input">
         <input type="range" id="sizeRange" min="1" max="100" value="5" class="size-slider">
       </div>
       <div class="info">
-        <p>Zoom: <span id="zoomLevel">100%</span></p>
-        <p><small>Ctrl+Z: Undo / Ctrl+Shift+Z: Redo</small></p>
+        <p>확대: <span id="zoomLevel">100%</span></p>
+        <p><small>Ctrl+Z: 실행취소</small></p>
       </div>
     </aside>
 
     <main id="viewport">
       <div id="canvasWrapper">
-        <div id="canvasContainer"></div>
+        <div id="canvasContainer">
+          </div>
       </div>
     </main>
 
     <aside id="layersPanel">
       <div class="panel-header">
-        <span>Layers</span>
-        <button id="addLayer" class="small-btn">+</button>
+        <span>레이어</span>
+        <button id="addLayer" class="small-btn">+ 추가</button>
       </div>
       <div id="layersList"></div>
     </aside>
