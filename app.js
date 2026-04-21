@@ -296,32 +296,43 @@ document.getElementById("export").onclick = () => {
 const resetBtn = document.getElementById('reset-btn');
 
 resetBtn.addEventListener('click', async () => {
-  if (!confirm("정말로 전체 캔버스를 초기화하시겠습니까? 모든 레이어의 데이터가 삭제됩니다.")) return;
+  if (!confirm("정말로 전체 캔버스를 초기화하시겠습니까?")) return;
 
   try {
-    const q = query(
-      collection(db, "strokes"), 
-      where("roomId", "==", roomId)
-    );
-    
-    const querySnapshot = await getDocs(q);
+    let totalDeleted = 0;
 
-    if (querySnapshot.empty) {
+    for (const layer of layers) {
+      const ref = collection(
+        db,
+        "rooms", roomId,
+        "pages", "page1",
+        "layers", layer.id,
+        "strokes"
+      );
+
+      const snap = await getDocs(ref);
+
+      if (!snap.empty) {
+        const batch = writeBatch(db);
+
+        snap.forEach((docSnap) => {
+          batch.delete(docSnap.ref);
+          totalDeleted++;
+        });
+
+        await batch.commit();
+      }
+    }
+
+    if (totalDeleted === 0) {
       alert("이미 비어있는 상태입니다.");
       return;
     }
 
-    // 일괄 삭제 (Batch) 처리
-    const batch = writeBatch(db);
-    querySnapshot.forEach((docSnap) => {
-      batch.delete(docSnap.ref);
-    });
+    alert("캔버스가 완전히 초기화되었습니다.");
 
-    await batch.commit();
-    alert("캔버스가 초기화되었습니다.");
-    
   } catch (error) {
-    console.error("초기화 중 오류 발생:", error);
+    console.error("초기화 실패:", error);
     alert("초기화 실패: " + error.message);
   }
 });
