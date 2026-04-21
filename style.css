@@ -147,3 +147,19 @@ body { margin: 0; font-family: sans-serif; background: var(--bg-dark); color: va
   border: 2px solid var(--accent);
   object-fit: cover;
 }
+
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: #333;
+  padding: 4px 8px;
+  border-radius: 20px;
+  font-size: 12px;
+}
+.user-chip img {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  object-fit: cover;
+}

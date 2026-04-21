@@ -39,74 +39,85 @@ const appDiv = document.getElementById("app");
 const googleLoginBtn = document.getElementById("googleLoginBtn");
 
 googleLoginBtn.onclick = () => signInWithPopup(auth, provider);
-
+// 1. 접속 상태 업데이트 함수
 async function updatePresence(user) {
   if (!user) return;
-  const userRef = doc(db, "rooms", roomId, "users", user.uid);
-  await setDoc(userRef, {
-    name: user.displayName || "익명",
-    photo: user.photoURL || "",
-    lastSeen: Date.now(), // 현재 시간을 기록
-    online: true
-  }, { merge: true });
+  try {
+    const userRef = doc(db, "rooms", roomId, "users", user.uid);
+    await setDoc(userRef, {
+      name: user.displayName || "익명",
+      photo: user.photoURL || "",
+      lastSeen: Date.now(),
+      online: true
+    }, { merge: true });
+  } catch (e) {
+    console.error("Presence update failed:", e);
+  }
 }
 
-// 2. 활동 중단(나감) 처리 함수
+// 2. 오프라인 처리 함수
 async function setOffline(uid) {
   if (!uid) return;
   const userRef = doc(db, "rooms", roomId, "users", uid);
   await updateDoc(userRef, { online: false });
 }
 
-onAuthStateChanged(auth, (user) => {
+// --- 인증 상태 변경 감지 ---
+onAuthStateChanged(auth, async (user) => {
   if (user) {
+    // UI 전환
     loginOverlay.style.display = "none";
     appContainer.style.display = "flex";
     
-    // 접속하자마자 상태 업데이트
+    // [기능 추가] 접속 상태 관리
     updatePresence(user);
-
-    // 30초마다 나 아직 있다고 신호 보내기 (Heartbeat)
     if (heartbeatInterval) clearInterval(heartbeatInterval);
-    heartbeatInterval = setInterval(() => updatePresence(user), 60000);
-
-    // 창을 닫거나 나갈 때 오프라인 처리
+    heartbeatInterval = setInterval(() => updatePresence(user), 30000);
     window.addEventListener('beforeunload', () => setOffline(user.uid));
+
+    // [중요] 기존에 있던 그림판 초기화 로직들 다시 실행
+    listenUserList(); // 접속자 목록 감시
+    listenReset();    // 리셋 신호 감시
     
-    listenUserList();
-    layers.forEach(l => listenLayer(l.id));
+    // 만약 기존에 레이어를 생성하는 코드가 있었다면 여기서 호출해야 합니다.
+    // 예: 첫 번째 레이어 생성 및 리스너 연결
+    if (layers.length === 0) {
+      createLayer("layer1"); 
+    } else {
+      layers.forEach(l => listenLayer(l.id));
+    }
+
   } else {
     loginOverlay.style.display = "flex";
     appContainer.style.display = "none";
+    if (heartbeatInterval) clearInterval(heartbeatInterval);
   }
 });
 
-// 3. 사용자 리스트 감시 (일정 시간 지난 사람 필터링)
+// [중요] listenUserList 함수 내부에 에러 방지 코드 추가
 function listenUserList() {
   const usersRef = collection(db, "rooms", roomId, "users");
   onSnapshot(usersRef, (snapshot) => {
     const userListDiv = document.getElementById("userList");
-    userListDiv.innerHTML = "";
+    if (!userListDiv) return; // 요소가 없으면 중단
     
+    userListDiv.innerHTML = "";
     const now = Date.now();
-    const threshold = 5 * 60 * 1000;
+    const threshold = 2 * 60 * 1000; // 2분
 
     snapshot.docs.forEach((docSnap) => {
       const userData = docSnap.data();
-      
-      if (userData.online && (now - userData.lastSeen < threshold)) {
-        const img = document.createElement("img");
-        img.src = userData.photo || "https://via.placeholder.com/30";
-        img.title = userData.name;
-        img.className = "user-avatar";
-        userListDiv.appendChild(img);
+      if (userData.online && (now - (userData.lastSeen || 0) < threshold)) {
+        const chip = document.createElement("div");
+        chip.className = "user-chip";
+        chip.innerHTML = `
+          <img src="${userData.photo || 'https://via.placeholder.com/20'}" alt="avatar">
+          <span>${userData.name}</span>
+        `;
+        userListDiv.appendChild(chip);
       }
     });
   });
-}
-
-function initApp() {
-  if (layers.length === 0) createLayer("layer1");
 }
 
 // --- 4. 레이어 관리 함수 ---
