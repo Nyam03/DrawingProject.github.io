@@ -54,6 +54,7 @@ onAuthStateChanged(auth, async (user) => {
     
     initApp();
     listenUsers();
+    listenResetTrigger();
   } else {
     loginOverlay.style.display = "flex";
     appDiv.style.display = "none";
@@ -328,7 +329,10 @@ resetBtn.addEventListener('click', async () => {
       alert("이미 비어있는 상태입니다.");
       return;
     }
-
+    await setDoc(doc(db, "rooms", roomId), {
+      resetAt: Date.now()
+    }, { merge: true });
+    
     alert("캔버스가 완전히 초기화되었습니다.");
 
   } catch (error) {
@@ -336,3 +340,25 @@ resetBtn.addEventListener('click', async () => {
     alert("초기화 실패: " + error.message);
   }
 });
+
+function clearAllCanvases() {
+  Object.keys(contexts).forEach(layerId => {
+    const ctx = contexts[layerId];
+    const canvas = canvases[layerId];
+    if (ctx && canvas) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+  });
+}
+
+function listenResetTrigger() {
+  onSnapshot(doc(db, "rooms", roomId), (snap) => {
+    const data = snap.data();
+    if (!data) return;
+
+    // resetAt 값이 있으면 무조건 클리어
+    if (data.resetAt) {
+      clearAllCanvases();
+    }
+  });
+}
