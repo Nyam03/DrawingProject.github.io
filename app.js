@@ -28,7 +28,7 @@ let currentUser = null;
 let currentLayer = "layer1";
 let tool = "brush", color = "#000000", size = 5;
 let layers = []; 
-let canvases = {}, contexts = {}, unsubscribes = {}; // 리스너 해제를 위한 객체 추가
+let canvases = {}, contexts = {}, unsubscribes = {};
 let scale = 1, offset = { x: 0, y: 0 };
 let drawing = false, currentStroke = [];
 
@@ -45,7 +45,6 @@ onAuthStateChanged(auth, async (user) => {
     loginOverlay.style.display = "none";
     appDiv.style.display = "flex";
     
-    // 접속자 정보 등록
     await setDoc(doc(db, "rooms", roomId, "users", user.uid), {
       name: user.displayName,
       photo: user.photoURL,
@@ -76,7 +75,7 @@ function listenUsers() {
 }
 
 function initApp() {
-  if (layers.length === 0) createLayer("layer1");
+  if (layers.length === 0) createLayer("layer1", "Base Layer");
 }
 
 // --- 4. 레이어 관리 함수 ---
@@ -85,11 +84,16 @@ document.getElementById("addLayer").onclick = () => {
     alert("레이어는 최대 5개까지만 생성 가능합니다.");
     return;
   }
-  const newId = `layer${Date.now()}`; // 고유 ID 생성
-  createLayer(newId);
+  // 사용 가능한 가장 작은 번호 찾기 (Layer 1~5)
+  const existingNums = layers.map(l => parseInt(l.displayName.replace("Layer ", "")) || 0);
+  let nextNum = 1;
+  while(existingNums.includes(nextNum)) nextNum++;
+  
+  const newId = `layer_${Date.now()}`;
+  createLayer(newId, `Layer ${nextNum}`);
 };
 
-function createLayer(layerId) {
+function createLayer(layerId, displayName) {
   const container = document.getElementById("canvasContainer");
   if (canvases[layerId]) return;
 
@@ -102,12 +106,11 @@ function createLayer(layerId) {
   canvases[layerId] = canvas;
   contexts[layerId] = canvas.getContext("2d");
 
-  // 새 레이어를 항상 가장 위에 배치 (가장 높은 order)
   const maxOrder = layers.length > 0 ? Math.max(...layers.map(l => l.order)) : 0;
-  const newLayer = { id: layerId, order: maxOrder + 1, opacity: 1 };
+  const newLayer = { id: layerId, displayName: displayName, order: maxOrder + 1, opacity: 1 };
   layers.push(newLayer);
   
-  currentLayer = layerId; // 생성 시 자동 선택
+  currentLayer = layerId;
   listenLayer(layerId);
   updateLayerUI();
 }
@@ -117,24 +120,20 @@ function deleteLayer(layerId) {
     alert("최소 하나의 레이어는 필요합니다.");
     return;
   }
-  if (!confirm(`${layerId}를 삭제하시겠습니까?`)) return;
+  if (!confirm(`이 레이어를 삭제하시겠습니까?`)) return;
 
-  // 1. 캔버스 제거
   const canvas = canvases[layerId];
   if (canvas) canvas.remove();
 
-  // 2. 리스너 해제
   if (unsubscribes[layerId]) {
     unsubscribes[layerId]();
     delete unsubscribes[layerId];
   }
 
-  // 3. 데이터 정리
   delete canvases[layerId];
   delete contexts[layerId];
   layers = layers.filter(l => l.id !== layerId);
 
-  // 4. 현재 레이어가 삭제되었다면 다른 레이어 선택
   if (currentLayer === layerId) {
     currentLayer = layers[layers.length - 1].id;
   }
@@ -143,10 +142,6 @@ function deleteLayer(layerId) {
 }
 
 function moveLayer(layerId, direction) {
-  const idx = layers.findIndex(l => l.id === layerId);
-  if (idx === -1) return;
-
-  // 실제 배열 순서가 아니라 'order' 값을 교체하여 정렬 순서를 변경
   const sorted = [...layers].sort((a, b) => a.order - b.order);
   const currentIdx = sorted.findIndex(l => l.id === layerId);
 
@@ -169,14 +164,13 @@ function updateLayerUI() {
   const list = document.getElementById("layersList");
   list.innerHTML = "";
 
-  // UI상으로는 order가 높은 것(위에 있는 것)이 먼저 보이게 정렬
   [...layers].sort((a, b) => b.order - a.order).forEach((layer) => {
     const div = document.createElement("div");
     div.className = `layerItem ${currentLayer === layer.id ? "active" : ""}`;
     
     div.innerHTML = `
       <div class="layer-top">
-        <span>${layer.id === 'layer1' ? 'Base Layer' : layer.id.substring(0, 8)}</span>
+        <span>${layer.displayName}</span>
         <div class="layer-controls">
           <button class="up-btn" title="위로">▲</button>
           <button class="down-btn" title="아래로">▼</button>
@@ -186,7 +180,6 @@ function updateLayerUI() {
       <input type="range" min="0" max="1" step="0.1" value="${layer.opacity}">
     `;
 
-    // 이벤트 연결
     div.onclick = (e) => {
       if(e.target.tagName !== 'BUTTON' && e.target.tagName !== 'INPUT') {
         currentLayer = layer.id;
@@ -204,18 +197,13 @@ function updateLayerUI() {
     };
 
     list.appendChild(div);
-    
-    // 캔버스의 실제 시각적 순서(z-index) 업데이트
-    if (canvases[layer.id]) {
-      canvases[layer.id].style.zIndex = layer.order;
-    }
+    if (canvases[layer.id]) canvases[layer.id].style.zIndex = layer.order;
   });
 }
 
-// --- 5. 드로잉 및 리스너 로직 (unsubscribes 추가) ---
+// --- 5. 드로잉 로직 (경로 통일: "strokes" 컬렉션 사용) ---
 
 function listenLayer(layerId) {
-  // 기존 리스너가 있다면 해제
   if (unsubscribes[layerId]) unsubscribes[layerId]();
 
   const q = query(
@@ -233,10 +221,8 @@ function listenLayer(layerId) {
 
     snapshot.docs.forEach((doc) => {
       const s = doc.data();
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.lineWidth = s.size;
-      ctx.strokeStyle = s.color;
+      ctx.lineCap = "round"; ctx.lineJoin = "round";
+      ctx.lineWidth = s.size; ctx.strokeStyle = s.color;
       ctx.globalCompositeOperation = s.tool === "eraser" ? "destination-out" : "source-over";
 
       ctx.beginPath();
@@ -249,26 +235,6 @@ function listenLayer(layerId) {
   });
 }
 
-// --- (나머지 Undo, Redo, Mouse Event, Reset 로직은 동일) ---
-// 단, addDoc 시 layerId를 currentLayer로 정확히 전달하는지 확인
-document.addEventListener("mouseup", async () => {
-  if (!drawing || currentStroke.length === 0) { drawing = false; return; }
-  drawing = false;
-
-  await clearRedoStack();
-  const ref = collection(db, "strokes"); // strokes 컬렉션으로 통일 (listenLayer의 query와 일치)
-  await addDoc(ref, {
-    roomId: roomId,
-    layerId: currentLayer, // 현재 선택된 레이어 ID 저장
-    points: currentStroke, 
-    color, size, tool, 
-    timestamp: Date.now(), 
-    visible: true,
-    userId: currentUser.uid,
-    userName: currentUser.displayName
-  });
-});
-// --- 5. 드로잉 로직 ---
 function getMousePos(e) {
   const rect = canvases[currentLayer].getBoundingClientRect();
   return {
@@ -280,84 +246,72 @@ function getMousePos(e) {
 function drawSegment(ctx, points) {
   if (points.length < 2) return;
   const p1 = points[points.length - 2], p2 = points[points.length - 1];
-  ctx.lineWidth = size;
-  ctx.lineCap = ctx.lineJoin = "round";
+  ctx.lineWidth = size; ctx.lineCap = ctx.lineJoin = "round";
   ctx.globalCompositeOperation = tool === "eraser" ? "destination-out" : "source-over";
   ctx.strokeStyle = color;
   ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
 }
-/*
-function listenLayer(layerId) {
+
+// --- 6. Undo / Redo / Reset (경로 통일) ---
+
+async function undoLastStroke() {
   const q = query(
     collection(db, "strokes"),
     where("roomId", "==", roomId),
-    where("layerId", "==", layerId),
+    where("layerId", "==", currentLayer),
+    where("userId", "==", currentUser.uid),
     where("visible", "==", true),
-    orderBy("timestamp", "asc")
-  );
-
-  onSnapshot(q, (snapshot) => {
-    const ctx = contexts[layerId];
-    if (!ctx) return;
-    ctx.clearRect(0, 0, canvases[layerId].width, canvases[layerId].height);
-
-    snapshot.docs.forEach((doc) => {
-      const s = doc.data();
-      
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.lineWidth = s.size;
-      ctx.strokeStyle = s.color;
-      ctx.globalCompositeOperation = s.tool === "eraser" ? "destination-out" : "source-over";
-
-      ctx.beginPath();
-      s.points.forEach((p, i) => {
-        if (i === 0) ctx.moveTo(p.x, p.y);
-        else ctx.lineTo(p.x, p.y);
-      });
-      ctx.stroke();
-    });
-  });
-}
-*/
-// --- 6. 사용자별 Undo / Redo (중요!) ---
-
-async function undoLastStroke() {
-  const ref = collection(db, "rooms", roomId, "pages", "page1", "layers", currentLayer, "strokes");
-  // 내 ID(userId)이면서 보이는 것 중 마지막 데이터 검색
-  const q = query(
-    ref, 
-    where("userId", "==", currentUser.uid), 
-    where("visible", "==", true), 
-    orderBy("timestamp", "desc"), 
+    orderBy("timestamp", "desc"),
     limit(1)
   );
   const snap = await getDocs(q);
-  snap.forEach(async (d) => await updateDoc(doc(db, ref.path, d.id), { visible: false }));
+  snap.forEach(async (d) => await updateDoc(doc(db, "strokes", d.id), { visible: false }));
 }
 
 async function redoLastStroke() {
-  const ref = collection(db, "rooms", roomId, "pages", "page1", "layers", currentLayer, "strokes");
-  // 내 ID(userId)이면서 숨겨진 것 중 마지막 데이터 검색
   const q = query(
-    ref, 
-    where("userId", "==", currentUser.uid), 
-    where("visible", "==", false), 
-    orderBy("timestamp", "desc"), 
+    collection(db, "strokes"),
+    where("roomId", "==", roomId),
+    where("layerId", "==", currentLayer),
+    where("userId", "==", currentUser.uid),
+    where("visible", "==", false),
+    orderBy("timestamp", "desc"),
     limit(1)
   );
   const snap = await getDocs(q);
-  snap.forEach(async (d) => await updateDoc(doc(db, ref.path, d.id), { visible: true }));
+  snap.forEach(async (d) => await updateDoc(doc(db, "strokes", d.id), { visible: true }));
 }
 
 async function clearRedoStack() {
-  const ref = collection(db, "rooms", roomId, "pages", "page1", "layers", currentLayer, "strokes");
-  const q = query(ref, where("userId", "==", currentUser.uid), where("visible", "==", false));
+  const q = query(
+    collection(db, "strokes"), 
+    where("roomId", "==", roomId),
+    where("layerId", "==", currentLayer),
+    where("userId", "==", currentUser.uid), 
+    where("visible", "==", false)
+  );
   const snap = await getDocs(q);
   const batch = writeBatch(db);
   snap.forEach((d) => batch.delete(d.ref));
   await batch.commit();
 }
+
+// 리셋 버튼: 모든 레이어의 선 데이터를 한 번에 삭제
+document.getElementById('reset-btn').onclick = async () => {
+  if (!confirm("모든 레이어의 그림을 초기화하시겠습니까?")) return;
+  try {
+    const q = query(collection(db, "strokes"), where("roomId", "==", roomId));
+    const snap = await getDocs(q);
+    if (snap.empty) { alert("초기화할 내용이 없습니다."); return; }
+
+    const batch = writeBatch(db);
+    snap.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+
+    await setDoc(doc(db, "rooms", roomId), { resetAt: Date.now() }, { merge: true });
+    alert("캔버스가 초기화되었습니다.");
+  } catch (e) { console.error(e); }
+};
 
 // --- 7. 이벤트 리스너 ---
 
@@ -377,28 +331,21 @@ document.addEventListener("mousemove", (e) => {
 document.addEventListener("mouseup", async () => {
   if (!drawing || currentStroke.length === 0) { drawing = false; return; }
   drawing = false;
-
   await clearRedoStack();
-  const ref = collection(db, "rooms", roomId, "pages", "page1", "layers", currentLayer, "strokes");
-  await addDoc(ref, {
-    points: currentStroke, color, size, tool, 
-    timestamp: Date.now(), 
-    visible: true,
-    userId: currentUser.uid, // 선 데이터에 사용자 ID 저장
-    userName: currentUser.displayName
+  await addDoc(collection(db, "strokes"), {
+    roomId, layerId: currentLayer, points: currentStroke, 
+    color, size, tool, timestamp: Date.now(), visible: true,
+    userId: currentUser.uid, userName: currentUser.displayName
   });
 });
 
 document.addEventListener("keydown", (e) => {
   const isCtrl = e.ctrlKey || e.metaKey;
-  if (isCtrl && e.shiftKey && e.key.toLowerCase() === "z") {
-    e.preventDefault(); redoLastStroke();
-  } else if (isCtrl && e.key.toLowerCase() === "z") {
-    e.preventDefault(); undoLastStroke();
-  }
+  if (isCtrl && e.shiftKey && e.key.toLowerCase() === "z") { e.preventDefault(); redoLastStroke(); }
+  else if (isCtrl && e.key.toLowerCase() === "z") { e.preventDefault(); undoLastStroke(); }
 });
 
-// 줌 및 기타 설정 (기존과 동일)
+// 줌 설정
 document.getElementById("viewport").onwheel = (e) => {
   e.preventDefault();
   const container = document.getElementById("canvasContainer");
@@ -434,7 +381,7 @@ document.getElementById("export").onclick = () => {
   const exportCanvas = document.createElement("canvas");
   exportCanvas.width = 1920; exportCanvas.height = 1080;
   const ctx = exportCanvas.getContext("2d");
-  layers.sort((a,b) => a.order - b.order).forEach(l => {
+  [...layers].sort((a,b) => a.order - b.order).forEach(l => {
     ctx.globalAlpha = l.opacity;
     ctx.drawImage(canvases[l.id], 0, 0);
   });
@@ -442,72 +389,12 @@ document.getElementById("export").onclick = () => {
   link.download = "drawing.png"; link.href = exportCanvas.toDataURL(); link.click();
 };
 
-// 리셋 버튼 이벤트 리스너
-const resetBtn = document.getElementById('reset-btn');
-
-resetBtn.addEventListener('click', async () => {
-  if (!confirm("정말로 전체 캔버스를 초기화하시겠습니까?")) return;
-
-  try {
-    let totalDeleted = 0;
-
-    for (const layer of layers) {
-      const ref = collection(
-        db,
-        "rooms", roomId,
-        "pages", "page1",
-        "layers", layer.id,
-        "strokes"
-      );
-
-      const snap = await getDocs(ref);
-
-      if (!snap.empty) {
-        const batch = writeBatch(db);
-
-        snap.forEach((docSnap) => {
-          batch.delete(docSnap.ref);
-          totalDeleted++;
-        });
-
-        await batch.commit();
-      }
-    }
-
-    if (totalDeleted === 0) {
-      alert("이미 비어있는 상태입니다.");
-      return;
-    }
-    await setDoc(doc(db, "rooms", roomId), {
-      resetAt: Date.now()
-    }, { merge: true });
-    
-    alert("캔버스가 완전히 초기화되었습니다.");
-
-  } catch (error) {
-    console.error("초기화 실패:", error);
-    alert("초기화 실패: " + error.message);
-  }
-});
-
 function clearAllCanvases() {
-  Object.keys(contexts).forEach(layerId => {
-    const ctx = contexts[layerId];
-    const canvas = canvases[layerId];
-    if (ctx && canvas) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-    }
-  });
+  Object.keys(contexts).forEach(id => contexts[id].clearRect(0,0,1920,1080));
 }
 
 function listenResetTrigger() {
   onSnapshot(doc(db, "rooms", roomId), (snap) => {
-    const data = snap.data();
-    if (!data) return;
-
-    // resetAt 값이 있으면 무조건 클리어
-    if (data.resetAt) {
-      clearAllCanvases();
-    }
+    if (snap.data()?.resetAt) clearAllCanvases();
   });
 }
