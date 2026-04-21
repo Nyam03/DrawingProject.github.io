@@ -138,20 +138,33 @@ function drawSegment(ctx, points) {
 }
 
 function listenLayer(layerId) {
-  const ref = collection(db, "rooms", roomId, "pages", "page1", "layers", layerId, "strokes");
-  const q = query(ref, where("visible", "==", true), orderBy("timestamp"));
-  
-  onSnapshot(q, (snap) => {
+  const q = query(
+    collection(db, "strokes"),
+    where("roomId", "==", roomId),
+    where("layerId", "==", layerId),
+    where("visible", "==", true),
+    orderBy("timestamp", "asc")
+  );
+
+  onSnapshot(q, (snapshot) => {
     const ctx = contexts[layerId];
     if (!ctx) return;
-    ctx.clearRect(0, 0, 1920, 1080);
-    snap.forEach(doc => {
+    ctx.clearRect(0, 0, canvases[layerId].width, canvases[layerId].height);
+
+    snapshot.docs.forEach((doc) => {
       const s = doc.data();
+      
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
       ctx.lineWidth = s.size;
       ctx.strokeStyle = s.color;
       ctx.globalCompositeOperation = s.tool === "eraser" ? "destination-out" : "source-over";
+
       ctx.beginPath();
-      s.points.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+      s.points.forEach((p, i) => {
+        if (i === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      });
       ctx.stroke();
     });
   });
@@ -279,14 +292,18 @@ document.getElementById("export").onclick = () => {
   link.download = "drawing.png"; link.href = exportCanvas.toDataURL(); link.click();
 };
 
+// 리셋 버튼 이벤트 리스너
 const resetBtn = document.getElementById('reset-btn');
 
 resetBtn.addEventListener('click', async () => {
-  if (!confirm("정말로 캔버스를 초기화하시겠습니까? 모든 그림이 사라집니다.")) return;
+  if (!confirm("정말로 전체 캔버스를 초기화하시겠습니까? 모든 레이어의 데이터가 삭제됩니다.")) return;
 
   try {
-    // 1. 현재 화면에 보이고 있는(visible == true) 모든 스트로크 가져오기
-    const q = query(collection(db, "strokes"), where("visible", "==", true));
+    const q = query(
+      collection(db, "strokes"), 
+      where("roomId", "==", roomId)
+    );
+    
     const querySnapshot = await getDocs(q);
 
     if (querySnapshot.empty) {
@@ -294,20 +311,17 @@ resetBtn.addEventListener('click', async () => {
       return;
     }
 
-    // 2. 일괄 업데이트 (Batch 처리)를 사용하여 효율적으로 데이터 처리
+    // 일괄 삭제 (Batch) 처리
     const batch = writeBatch(db);
-    
-    querySnapshot.forEach((doc) => {
-      batch.delete(doc.ref)
+    querySnapshot.forEach((docSnap) => {
+      batch.delete(docSnap.ref);
     });
 
     await batch.commit();
-  
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
     alert("캔버스가 초기화되었습니다.");
+    
   } catch (error) {
     console.error("초기화 중 오류 발생:", error);
-    alert("초기화에 실패했습니다.");
+    alert("초기화 실패: " + error.message);
   }
 });
